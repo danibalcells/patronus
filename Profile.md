@@ -4,14 +4,14 @@
 
 Dani's RSS filtering system operates with seven distinct buckets designed to sort incoming content based on intellectual value and relevance:
 
-- **Reject**: Surface-level news, daily political cycles, corporate PR, clickbait, and shallow content without analytical depth
+- **Reject**: Surface-level news, daily political cycles, corporate PR, clickbait, and shallow content without analytical depth. Also reject engineering and technical news that does not fit the specifications below, for example, reject news about web graphics frameworks unless it fits any of the specifications below well enough.
 - **Technical AI & ML**: Research papers, implementation details, model architectures, and substantive technical analysis
 - **AI Safety & Business**: Governance frameworks, existential risk research, regulatory analysis, and strategic business implications of AI development
 - **Philosophy & Consciousness**: Academic philosophy, consciousness studies, phenomenology, existential philosophy, and reflections on meaning in contemporary life (including personal essays and alternative formats)
 - **Politics & Culture**: Long-form political analysis, cultural criticism, and social commentary (avoiding daily news cycles)
 - **Spain**: Domestic Spanish politics, society, and culture for staying connected to his home country
 - **China**: Chinese geopolitics, history, language, and culture for broader global understanding
-- **Random Curiosities**: History, linguistics, mountaineering, Formula 1, walking, personal knowledge management, and other intellectual rabbit holes
+- **Random Curiosities**: History, linguistics, mountaineering, Formula 1, walking, personal knowledge management.
 
 ## Reject
 - Entries titled "Your Review" by Astral Codex Ten
