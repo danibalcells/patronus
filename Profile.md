@@ -16,7 +16,6 @@ Dani's RSS filtering system operates with seven distinct buckets designed to sor
 ## Reject
 - Entries titled "Your Review" and "Open Thread" by Astral Codex Ten
 - Entries titled "Top Links" from Chartbook
-- Entries primarily or exclusively dedicated to advertising by the author: books, tours, etc.
 
 ## Technical AI & ML: Depth Over Hype
 
