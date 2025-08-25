@@ -205,9 +205,9 @@ def build_atom_xml(bucket_key: Bucket, items: List[Article]) -> str:
     from feedgen.feed import FeedGenerator
     fg = FeedGenerator()
     fg.id(f"urn:patronus:{bucket_key.value}")
-    fg.title(f"Patronus: {bucket_key.display_name}")
+    fg.title(f"Patronus: {bucket_key.display_name} (Atom)")
     fg.link(href="https://example.com", rel="alternate")
-    fg.subtitle(f"Filtered feed for {bucket_key.display_name}")
+    fg.subtitle(f"Filtered feed for {bucket_key.display_name} (Atom)")
     fg.updated(datetime.now(timezone.utc))
     for it in items:
         fe = fg.add_entry()
@@ -407,9 +407,9 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
     def _rss_doc(bucket_key: Bucket, selected: List[Article]) -> str:
         rss = etree.Element("rss", attrib={"version": "2.0"})
         channel = etree.SubElement(rss, "channel")
-        title = etree.SubElement(channel, "title"); title.text = f"Patronus: {bucket_key.display_name}"
+        title = etree.SubElement(channel, "title"); title.text = f"Patronus: {bucket_key.display_name} (RSS)"
         link = etree.SubElement(channel, "link"); link.text = "https://example.com"
-        desc = etree.SubElement(channel, "description"); desc.text = f"Filtered feed for {bucket_key.display_name}"
+        desc = etree.SubElement(channel, "description"); desc.text = f"Filtered feed for {bucket_key.display_name} (RSS)"
         copied_count: int = 0
         for it in selected:
             key: Optional[str] = (it.get("link") or None)
@@ -434,7 +434,7 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
         ns = "http://www.w3.org/2005/Atom"
         feed = etree.Element("{%s}feed" % ns, nsmap={None: ns})
         id_el = etree.SubElement(feed, "{%s}id" % ns); id_el.text = f"urn:patronus:{bucket_key.value}"
-        title_el = etree.SubElement(feed, "{%s}title" % ns); title_el.text = f"Patronus: {bucket_key.display_name}"
+        title_el = etree.SubElement(feed, "{%s}title" % ns); title_el.text = f"Patronus: {bucket_key.display_name} (Atom)"
         updated_el = etree.SubElement(feed, "{%s}updated" % ns); updated_el.text = datetime.now(timezone.utc).isoformat()
         copied_count: int = 0
         for it in selected:
