@@ -28,6 +28,8 @@ class Article(TypedDict):
     content: str
     published: Optional[datetime]
     author: Optional[str]
+    feed_title: Optional[str]
+    feed_link: Optional[str]
 
 class ArticleClassification(BaseModel):
     bucket: Bucket
@@ -93,6 +95,7 @@ def collect_meta_entries(feed_urls: List[str], per_feed_limit: int = 10) -> List
                 "published": published_dt,
                 "author": _entry_author(e) or getattr(parsed.feed, "title", ""),
                 "feed_title": getattr(parsed.feed, "title", ""),
+                "feed_link": getattr(parsed.feed, "link", ""),
             })
         feed_meta_sorted: List[Dict] = sorted(
             feed_meta,
@@ -134,6 +137,8 @@ def build_article_list(meta_entries: List[Dict], total_limit: Optional[int]) -> 
             "content": content_text,
             "published": m["published"],
             "author": author_out,
+            "feed_title": feed_name or None,
+            "feed_link": (m.get("feed_link") or None),
         })
     return articles
 
@@ -176,25 +181,47 @@ def classify_articles(client: OpenAI, profile_text: str, articles: List[Article]
     return classifications, buckets
 
 
-def build_rss_xml(bucket_key: Bucket, items: List[Article]) -> str:
+def build_atom_xml(bucket_key: Bucket, items: List[Article]) -> str:
     from feedgen.feed import FeedGenerator
+    from urllib.parse import urlparse
     fg = FeedGenerator()
+    fg.id(f"urn:patronus:{bucket_key.value}")
     fg.title(f"Patronus: {bucket_key.value}")
     fg.link(href="https://example.com", rel="alternate")
-    fg.description(f"Filtered feed for {bucket_key.value}")
+    fg.subtitle(f"Filtered feed for {bucket_key.value}")
+    fg.updated(datetime.now(timezone.utc))
     for it in items:
         fe = fg.add_entry()
-        fe.title(it["title"]) 
-        fe.link(href=it["link"])
-        if it.get("published"):
-            pub_dt = it["published"]
-            if isinstance(pub_dt, datetime) and pub_dt.tzinfo is None:
+        fe.id(it["link"] or it["title"]) 
+        fe.title(it["title"])
+        if it.get("link"):
+            fe.link(href=it["link"]) 
+        pub_dt = it.get("published")
+        if isinstance(pub_dt, datetime):
+            if pub_dt.tzinfo is None:
                 pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-            fe.published(pub_dt) 
-        author_val = it.get("author")
-        if author_val:
-            fe.author(name=author_val)
-    return fg.rss_str(pretty=True).decode("utf-8")
+            fe.published(pub_dt)
+            fe.updated(pub_dt)
+        display_author: str = (it.get("author") or "").strip()
+        feed_name: str = (it.get("feed_title") or "").strip()
+        author_name_out: str = display_author or feed_name
+        if author_name_out:
+            domain: str = "example.invalid"
+            try:
+                parsed = urlparse(it.get("link", ""))
+                domain = parsed.netloc or domain
+            except Exception:
+                pass
+            email_field: str = f"noreply@{domain}"
+            fe.author({"name": author_name_out, "email": email_field})
+        source_title: str = (it.get("feed_title") or "").strip()
+        source_link: str = (it.get("feed_link") or "").strip()
+        if source_title or source_link:
+            fe.source(url=source_link or None, title=source_title or None)
+        # content_html: str = it.get("content", "")
+        # if content_html:
+        #     fe.content(type="html", content=content_html)
+    return fg.atom_str(pretty=True).decode("utf-8")
 
 
 def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]]) -> Dict[str, str]:
@@ -209,9 +236,9 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]]) -> Dict[str, str]:
     public_urls: Dict[str, str] = {}
     for b in Bucket:
         key = f"{gcs_prefix}{b.value}.xml"
-        xml_data: str = build_rss_xml(b, buckets.get(b, []))
+        xml_data: str = build_atom_xml(b, buckets.get(b, []))
         blob = gcs_bucket.blob(key)
-        blob.upload_from_string(xml_data, content_type="application/rss+xml")
+        blob.upload_from_string(xml_data, content_type="application/atom+xml; charset=utf-8")
         public_urls[b.value] = blob.public_url
     return public_urls
 
