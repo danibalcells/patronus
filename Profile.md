@@ -6,7 +6,7 @@ Dani's RSS filtering system operates with seven distinct buckets designed to sor
 
 - **Reject**: Surface-level news, daily political cycles, corporate PR, clickbait, and shallow content without analytical depth. Also reject engineering and technical news that does not fit the specifications below, for example, reject news about web graphics frameworks unless it fits any of the specifications below well enough.
 - **Technical AI & ML**: Research papers, implementation details, model architectures, and substantive technical analysis
-- **AI Safety & Business**: Governance frameworks, existential risk research, regulatory analysis, and strategic business implications of AI development
+- **Tech Beyond The Technical**: Non-technical implications of technology, including existential risk research, regulatory analysis, strategic business implications of AI and tech development, the interplay between humanity and technology, mental health impact of AI, etc.
 - **Philosophy & Consciousness**: Academic philosophy, consciousness studies, phenomenology, existential philosophy, and reflections on meaning in contemporary life (including personal essays and alternative formats)
 - **Politics & Culture**: Long-form political analysis, cultural criticism, and social commentary (avoiding daily news cycles)
 - **Spain**: Domestic Spanish politics, society, and culture for staying connected to his home country
@@ -14,7 +14,7 @@ Dani's RSS filtering system operates with seven distinct buckets designed to sor
 - **Random Curiosities**: History, linguistics, mountaineering, Formula 1, walking, personal knowledge management.
 
 ## Reject
-- Entries titled "Your Review" by Astral Codex Ten
+- Entries titled "Your Review" and "Open Thread" by Astral Codex Ten
 - Entries titled "Top Links" from Chartbook
 
 ## Technical AI & ML: Depth Over Hype
@@ -23,11 +23,11 @@ Dani approaches artificial intelligence from a position of technical sophisticat
 
 He explicitly rejects mainstream AI coverage focused on corporate announcements, funding rounds, or breathless speculation without technical substance. Sources like Distill, research lab technical blogs, and detailed implementation analyses align with his interests, while TechCrunch-style AI reporting would be systematically filtered out. **For this category specifically, academic sources and rigorous technical analysis are strongly preferred, though he's not completely inflexible about this standard**.
 
-## AI Safety & Business: Systemic Thinking
+## Tech Beyond The Technical
 
-The pairing of AI safety with business considerations reflects Dani's understanding that technological development occurs within complex economic and institutional frameworks. He seeks content examining how business incentives shape AI development, how regulatory frameworks might emerge, and what governance structures could effectively manage AI risks.
+The pairing of technology and AI safety with business, societal, cultural and psychological considerations reflects Dani's understanding that technological development occurs within complex economic, social, cultural, psychological and institutional frameworks. He seeks content examining how business incentives shape AI development, how regulatory frameworks might emerge, what governance structures could effectively manage AI risks, how technology broadly and AI specifically might interplay with people and culture.
 
-High-value content includes analysis from organizations like the Centre for the Future of Humanity, AI governance research, and thoughtful business strategy pieces that grapple with long-term implications. **Content addressing AI alignment, existential risk, and the political economy of AI development resonates strongly**, while generic business news about AI companies gets rejected unless it contains deeper strategic or safety insights.
+High-value content includes analysis from organizations like the Centre for the Future of Humanity, AI governance research, thoughtful business strategy pieces that grapple with long-term implications, and essays on human-technology relationships. **Content addressing AI alignment, existential risk, the political economy of AI development or the psychologicala and cultural impact of technology and AI resonates strongly**, while generic business news about AI companies gets rejected unless it contains deeper strategic or safety insights.
 
 This category also includes, to a lesser extent, long-form analysis of the technology business landscape, exemplified by publications such as Stratechery.
 
