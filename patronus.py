@@ -206,14 +206,7 @@ def build_atom_xml(bucket_key: Bucket, items: List[Article]) -> str:
         feed_name: str = (it.get("feed_title") or "").strip()
         author_name_out: str = display_author or feed_name
         if author_name_out:
-            domain: str = "example.invalid"
-            try:
-                parsed = urlparse(it.get("link", ""))
-                domain = parsed.netloc or domain
-            except Exception:
-                pass
-            email_field: str = f"noreply@{domain}"
-            fe.author({"name": author_name_out, "email": email_field})
+            fe.author({"name": author_name_out})
         source_title: str = (it.get("feed_title") or "").strip()
         source_link: str = (it.get("feed_link") or "").strip()
         if source_title or source_link:
