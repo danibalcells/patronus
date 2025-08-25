@@ -450,7 +450,7 @@ def main() -> None:
     feed_urls: List[str] = read_feed_urls(args.feeds_path)
     rss_index, atom_index, origin_map = build_source_index(feed_urls)
     meta_entries: List[Dict] = collect_meta_entries_from_index(rss_index, atom_index, origin_map, per_feed_limit=10)
-    total_limit: Optional[int] = 5 if args.dry_run else 50
+    total_limit: Optional[int] = 10 if args.dry_run else 50
     articles: List[Article] = build_article_list(meta_entries, total_limit=total_limit)
     classifications, buckets = classify_articles(client, profile_text, articles)
     print_summary(classifications)
