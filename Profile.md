@@ -16,12 +16,15 @@ Dani's RSS filtering system operates with seven distinct buckets designed to sor
 ## Reject
 - Entries titled "Your Review" and "Open Thread" by Astral Codex Ten
 - Entries titled "Top Links" from Chartbook
+- Entries primarily or exclusively dedicated to advertising by the author: books, tours, etc.
 
 ## Technical AI & ML: Depth Over Hype
 
 Dani approaches artificial intelligence from a position of technical sophistication, seeking content that advances understanding of how AI systems actually function rather than speculative predictions about their impact. His preferences lean heavily toward academic rigor—research papers from arXiv, detailed technical blog posts from practitioners, and implementation guides that provide concrete insights about model architectures, training methodologies, and performance characteristics.
 
 He explicitly rejects mainstream AI coverage focused on corporate announcements, funding rounds, or breathless speculation without technical substance. Sources like Distill, research lab technical blogs, and detailed implementation analyses align with his interests, while TechCrunch-style AI reporting would be systematically filtered out. **For this category specifically, academic sources and rigorous technical analysis are strongly preferred, though he's not completely inflexible about this standard**.
+
+Also choose this category for in-depth coverage of model releases, e.g. entries by Zvi Mowshowitz dedicated exclusively or primarily to discussing a specific model.
 
 ## Tech Beyond The Technical
 
