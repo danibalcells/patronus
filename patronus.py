@@ -19,14 +19,28 @@ import copy
 from dateutil import parser as dateutil_parser
 
 class Bucket(str, Enum):
-    REJECT = "reject"
-    TECHNICAL_AI_ML = "technical_ai_ml"
-    AI_SAFETY_BUSINESS = "ai_safety_business"
-    PHILOSOPHY_CONSCIOUSNESS = "philosophy_consciousness"
-    POLITICS_CULTURE = "politics_culture"
-    SPAIN = "spain"
-    CHINA = "china"
-    RANDOM_CURIOSITIES = "random_curiosities"
+    REJECT = "REJECT"
+    TECHNICAL_AI_ML = "TECHNICAL_AI_ML"
+    TECH_BEYOND_THE_TECHNICAL = "TECH_BEYOND_THE_TECHNICAL"
+    PHILOSOPHY_CONSCIOUSNESS = "PHILOSOPHY_CONSCIOUSNESS"
+    POLITICS_CULTURE = "POLITICS_CULTURE"
+    SPAIN = "SPAIN"
+    CHINA = "CHINA"
+    RANDOM_CURIOSITIES = "RANDOM_CURIOSITIES"
+
+    @property
+    def display_name(self) -> str:
+        mapping: Dict["Bucket", str] = {
+            Bucket.REJECT: "Rejected",
+            Bucket.TECHNICAL_AI_ML: "Technical AI/ML",
+            Bucket.TECH_BEYOND_THE_TECHNICAL: "Tech Beyond The Technical",
+            Bucket.PHILOSOPHY_CONSCIOUSNESS: "Philosophy & Consciousness",
+            Bucket.POLITICS_CULTURE: "Politics & Culture",
+            Bucket.SPAIN: "Spain",
+            Bucket.CHINA: "China",
+            Bucket.RANDOM_CURIOSITIES: "Random Curiosities",
+        }
+        return mapping[self]
 
 class Article(TypedDict):
     title: str
@@ -176,7 +190,7 @@ def classify_articles(client: OpenAI, profile_text: str, articles: List[Article]
     system_preamble: str = (
         "You are an assistant tasked with selecting content from an RSS feed that is relevant to Dani. "
         "Classify each article into one of the following buckets based on Dani's profile: "
-        "REJECT, TECHNICAL_AI_ML, AI_SAFETY_BUSINESS, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
+        "REJECT, TECHNICAL_AI_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
     )
     buckets: Dict[Bucket, List[Article]] = defaultdict(list)
     classifications: List[ArticleClassification] = []
@@ -189,12 +203,11 @@ def classify_articles(client: OpenAI, profile_text: str, articles: List[Article]
 
 def build_atom_xml(bucket_key: Bucket, items: List[Article]) -> str:
     from feedgen.feed import FeedGenerator
-    from urllib.parse import urlparse
     fg = FeedGenerator()
     fg.id(f"urn:patronus:{bucket_key.value}")
-    fg.title(f"Patronus: {bucket_key.value}")
+    fg.title(f"Patronus: {bucket_key.display_name}")
     fg.link(href="https://example.com", rel="alternate")
-    fg.subtitle(f"Filtered feed for {bucket_key.value}")
+    fg.subtitle(f"Filtered feed for {bucket_key.display_name}")
     fg.updated(datetime.now(timezone.utc))
     for it in items:
         fe = fg.add_entry()
@@ -245,12 +258,26 @@ def build_source_index(feed_urls: List[str]) -> Tuple[Dict[str, Any], Dict[str, 
             ch_link_el = root.find("channel/link")
             feed_title = ch_title_el.text.strip() if ch_title_el is not None and ch_title_el.text else ""
             feed_link = ch_link_el.text.strip() if ch_link_el is not None and ch_link_el.text else feed_url
+            rss_feed_author: str = ""
+            for tag in [
+                "managingEditor",
+                "webMaster",
+                "author",
+            ]:
+                el = root.find(f"channel/{tag}")
+                if el is not None and getattr(el, "text", None) and el.text.strip():
+                    rss_feed_author = el.text.strip()
+                    break
+            if not rss_feed_author:
+                dc_creator = root.find("channel/{http://purl.org/dc/elements/1.1/}creator")
+                if dc_creator is not None and getattr(dc_creator, "text", None) and dc_creator.text.strip():
+                    rss_feed_author = dc_creator.text.strip()
             for it in items:
                 link_el = it.find("link")
                 key = link_el.text.strip() if link_el is not None and link_el.text else None
                 if key:
                     idx[key] = it
-                    origin[key] = {"feed_url": feed_url, "feed_title": feed_title, "feed_link": feed_link, "kind": kind}
+                    origin[key] = {"feed_url": feed_url, "feed_title": feed_title, "feed_link": feed_link, "kind": kind, "feed_author": rss_feed_author}
         elif kind == "atom":
             ns = {"atom": "http://www.w3.org/2005/Atom"}
             entries = root.xpath("/atom:feed/atom:entry", namespaces=ns)
@@ -258,6 +285,8 @@ def build_source_index(feed_urls: List[str]) -> Tuple[Dict[str, Any], Dict[str, 
             feed_link_hrefs: list[str] = root.xpath("atom:link[@rel='alternate']/@href", namespaces=ns)
             feed_title = feed_title_el.text.strip() if feed_title_el is not None and feed_title_el.text else ""
             feed_link = feed_link_hrefs[0].strip() if feed_link_hrefs else feed_url
+            atom_author_name_el = root.find("{http://www.w3.org/2005/Atom}author/{http://www.w3.org/2005/Atom}name")
+            atom_feed_author: str = atom_author_name_el.text.strip() if atom_author_name_el is not None and getattr(atom_author_name_el, "text", None) else ""
             for e in entries:
                 hrefs: list[str] = e.xpath("atom:link[@rel='alternate']/@href", namespaces=ns)
                 if not hrefs:
@@ -265,7 +294,7 @@ def build_source_index(feed_urls: List[str]) -> Tuple[Dict[str, Any], Dict[str, 
                 key = hrefs[0].strip() if hrefs else None
                 if key:
                     idx[key] = e
-                    origin[key] = {"feed_url": feed_url, "feed_title": feed_title, "feed_link": feed_link, "kind": kind}
+                    origin[key] = {"feed_url": feed_url, "feed_title": feed_title, "feed_link": feed_link, "kind": kind, "feed_author": atom_feed_author}
         return idx
 
     rss_index: Dict[str, Any] = {}
@@ -367,7 +396,7 @@ def collect_meta_entries_from_index(rss_index: Dict[str, Any], atom_index: Dict[
     return meta_entries
 
 
-def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[str, Any], atom_index: Dict[str, Any]) -> Dict[str, str]:
+def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[str, Any], atom_index: Dict[str, Any], origin_map: Dict[str, Dict[str, str]]) -> Dict[str, str]:
     from google.cloud import storage
     load_dotenv()
     gcs_bucket_name: str = os.getenv("GCS_BUCKET_NAME", "")
@@ -378,14 +407,22 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
     def _rss_doc(bucket_key: Bucket, selected: List[Article]) -> str:
         rss = etree.Element("rss", attrib={"version": "2.0"})
         channel = etree.SubElement(rss, "channel")
-        title = etree.SubElement(channel, "title"); title.text = f"Patronus: {bucket_key.value}"
+        title = etree.SubElement(channel, "title"); title.text = f"Patronus: {bucket_key.display_name}"
         link = etree.SubElement(channel, "link"); link.text = "https://example.com"
-        desc = etree.SubElement(channel, "description"); desc.text = f"Filtered feed for {bucket_key.value}"
+        desc = etree.SubElement(channel, "description"); desc.text = f"Filtered feed for {bucket_key.display_name}"
         copied_count: int = 0
         for it in selected:
             key: Optional[str] = (it.get("link") or None)
             if key and key in rss_index:
-                channel.append(copy.deepcopy(rss_index[key]))
+                item_copy = copy.deepcopy(rss_index[key])
+                has_author_el = item_copy.find("author")
+                has_dc_creator_el = item_copy.find("{http://purl.org/dc/elements/1.1/}creator")
+                if (has_author_el is None or not (getattr(has_author_el, "text", None) or "")) and (has_dc_creator_el is None or not (getattr(has_dc_creator_el, "text", None) or "")):
+                    origin = origin_map.get(key, {})
+                    fallback = (origin.get("feed_author") or origin.get("feed_title") or "").strip()
+                    if fallback:
+                        au = etree.SubElement(item_copy, "author"); au.text = fallback
+                channel.append(item_copy)
                 copied_count += 1
                 print(f"RSS item copied bucket={bucket_key.value} link={key}")
             else:
@@ -397,13 +434,21 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
         ns = "http://www.w3.org/2005/Atom"
         feed = etree.Element("{%s}feed" % ns, nsmap={None: ns})
         id_el = etree.SubElement(feed, "{%s}id" % ns); id_el.text = f"urn:patronus:{bucket_key.value}"
-        title_el = etree.SubElement(feed, "{%s}title" % ns); title_el.text = f"Patronus: {bucket_key.value}"
+        title_el = etree.SubElement(feed, "{%s}title" % ns); title_el.text = f"Patronus: {bucket_key.display_name}"
         updated_el = etree.SubElement(feed, "{%s}updated" % ns); updated_el.text = datetime.now(timezone.utc).isoformat()
         copied_count: int = 0
         for it in selected:
             key: Optional[str] = (it.get("link") or None)
             if key and key in atom_index:
-                feed.append(copy.deepcopy(atom_index[key]))
+                entry_copy = copy.deepcopy(atom_index[key])
+                has_author = entry_copy.find("{%s}author" % ns)
+                if has_author is None:
+                    origin = origin_map.get(key, {})
+                    fallback = (origin.get("feed_author") or origin.get("feed_title") or "").strip()
+                    if fallback:
+                        a = etree.SubElement(entry_copy, "{%s}author" % ns)
+                        n = etree.SubElement(a, "{%s}name" % ns); n.text = fallback
+                feed.append(entry_copy)
                 copied_count += 1
                 print(f"ATOM entry copied bucket={bucket_key.value} link={key}")
             else:
@@ -411,7 +456,6 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
         print(f"ATOM bucket={bucket_key.value} copied={copied_count} selected={len(selected)}")
         return etree.tostring(feed, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
 
-    from google.cloud import storage
     storage_client = storage.Client()
     gcs_bucket = storage_client.bucket(gcs_bucket_name)
     public_urls: Dict[str, str] = {}
@@ -454,7 +498,7 @@ def main() -> None:
     articles: List[Article] = build_article_list(meta_entries, total_limit=total_limit)
     classifications, buckets = classify_articles(client, profile_text, articles)
     print_summary(classifications)
-    public_urls: Dict[str, str] = upload_bucket_feeds(buckets, rss_index, atom_index)
+    public_urls: Dict[str, str] = upload_bucket_feeds(buckets, rss_index, atom_index, origin_map)
     print({k: v for k, v in public_urls.items()})
 
 
