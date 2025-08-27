@@ -28,6 +28,22 @@ class State:
         self.assignments: Dict[str, str] = assignments or {}
 
 
+def _resolve_bucket_value(name: str) -> Optional[str]:
+    try:
+        # Exact match
+        _ = Bucket(name)
+        return name
+    except Exception:
+        pass
+    try:
+        import difflib
+        candidates: List[str] = [b.value for b in Bucket]
+        matches: List[str] = difflib.get_close_matches(name, candidates, n=1, cutoff=0.8)
+        return matches[0] if matches else None
+    except Exception:
+        return None
+
+
 def load_state(path: str) -> State:
     if not os.path.exists(path):
         return State()
@@ -35,7 +51,12 @@ def load_state(path: str) -> State:
         with open(path, "r") as f:
             data = json.load(f)
         seen_list: List[str] = data.get("seen_links", [])
-        assignments: Dict[str, str] = data.get("assignments", {})
+        assignments_raw: Dict[str, str] = data.get("assignments", {})
+        assignments: Dict[str, str] = {}
+        for link, bucket in assignments_raw.items():
+            resolved: Optional[str] = _resolve_bucket_value(bucket)
+            if resolved is not None:
+                assignments[link] = resolved
         return State(set(seen_list), dict(assignments))
     except Exception:
         return State()
@@ -56,7 +77,7 @@ def system_preamble_text() -> str:
     return (
         "You are an assistant tasked with selecting content from an RSS feed that is relevant to Dani. "
         "Classify each article into one of the following buckets based on Dani's profile: "
-        "REJECT, TECHNICAL_AI_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
+        "REJECT, TECHNICAL_AI_AND_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
     )
 
 
@@ -71,7 +92,10 @@ async def perform_upload(
     for link, bucket_value in assignments.items():
         if link not in rss_index and link not in atom_index:
             continue
-        bucket_key: Bucket = Bucket(bucket_value)
+        resolved_value: Optional[str] = _resolve_bucket_value(bucket_value)
+        if resolved_value is None:
+            continue
+        bucket_key: Bucket = Bucket(resolved_value)
         a: Article = {
             "title": link,
             "link": link,
@@ -172,7 +196,7 @@ async def polling_loop(
                 upload_ok: bool = False
                 try:
                     async with upload_lock:
-                        result = await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
+                        await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
                     upload_ok = True
                 except Exception as e:
                     print(f"[upload] failed err={e}")
