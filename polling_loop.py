@@ -90,33 +90,24 @@ async def perform_upload(
     return await asyncio.to_thread(upload_bucket_feeds, buckets, rss_index, atom_index, origin_map)
 
 
-async def classify_and_upload(
+async def classify_one(
     link: str,
     meta: Dict,
     client: OpenAI,
     profile_path: str,
-    state: State,
-    state_path: str,
-    state_lock: asyncio.Lock,
-    upload_lock: asyncio.Lock,
-    rss_index: Dict[str, object],
-    atom_index: Dict[str, object],
-    origin_map: Dict[str, Dict[str, str]],
-    dry_run: bool,
     semaphore: asyncio.Semaphore,
-) -> None:
+) -> Tuple[str, str]:
     async with semaphore:
+        print(f"[classify] START link={link}")
         profile_text: str = await asyncio.to_thread(read_profile, profile_path)
         articles: List[Article] = await asyncio.to_thread(build_article_list, [meta], None)
         article: Article = articles[0]
         classification: ArticleClassification = await asyncio.to_thread(
             classify_article, client, system_preamble_text(), profile_text, article
         )
-        async with state_lock:
-            state.assignments[link] = classification.bucket.value
-            save_state(state_path, state)
-        async with upload_lock:
-            await perform_upload(state.assignments, rss_index, atom_index, origin_map, dry_run)
+        bucket_value: str = classification.bucket.value
+        print(f"[classify] DONE bucket={bucket_value} link={link}")
+        return link, bucket_value
 
 
 async def polling_loop(
@@ -134,45 +125,72 @@ async def polling_loop(
     semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
     while True:
         try:
+            print(f"[poll] cycle_start ts={datetime.now().isoformat()}")
             feed_urls: List[str] = read_feed_urls(feeds_path)
             rss_index, atom_index, origin_map = await asyncio.to_thread(build_source_index, feed_urls)
+            print(f"[poll] indexed rss={len(rss_index)} atom={len(atom_index)} feeds={len(feed_urls)}")
             meta_entries: List[Dict] = await asyncio.to_thread(
                 collect_meta_entries_from_index, rss_index, atom_index, origin_map, 10
             )
+            print(f"[poll] collected_meta count={len(meta_entries)}")
             meta_by_link: Dict[str, Dict] = {m.get("link", ""): m for m in meta_entries if m.get("link")}
             current_links: Set[str] = set(meta_by_link.keys())
             new_links: Set[str] = current_links - state.seen_links
+            print(f"[poll] new_links count={len(new_links)}")
             if new_links:
-                async with state_lock:
-                    state.seen_links.update(new_links)
-                    save_state(state_path, state)
+                for link in new_links:
+                    meta = meta_by_link.get(link)
+                    if meta:
+                        title: str = meta.get("title") or ""
+                        print(f"[new] title={title} link={link}")
+                print(f"[classify] start count={len(new_links)} concurrency={concurrency}")
                 tasks: List[asyncio.Task] = []
                 for link in new_links:
                     meta = meta_by_link.get(link)
                     if not meta:
                         continue
-                    t = asyncio.create_task(
-                        classify_and_upload(
-                            link,
-                            meta,
-                            client,
-                            profile_path,
-                            state,
-                            state_path,
-                            state_lock,
-                            upload_lock,
-                            rss_index,
-                            atom_index,
-                            origin_map,
-                            dry_run,
-                            semaphore,
-                        )
-                    )
+                    t = asyncio.create_task(classify_one(link, meta, client, profile_path, semaphore))
                     tasks.append(t)
+                done_count: int = 0
+                new_assignments: Dict[str, str] = {}
+                for coro in asyncio.as_completed(tasks):
+                    link_res, bucket_val = await coro
+                    new_assignments[link_res] = bucket_val
+                    done_count += 1
+                    print(f"[classify] progress {done_count}/{len(tasks)}")
+                bucket_counts: Dict[str, int] = {}
+                for _, b in new_assignments.items():
+                    bucket_counts[b] = bucket_counts.get(b, 0) + 1
+                print(f"[classify] summary {bucket_counts}")
+                combined_assignments: Dict[str, str] = dict(state.assignments)
+                combined_assignments.update(new_assignments)
+                selection_counts: Dict[str, int] = {}
+                for link, b in combined_assignments.items():
+                    if link in rss_index or link in atom_index:
+                        selection_counts[b] = selection_counts.get(b, 0) + 1
+                print(f"[upload] begin buckets={selection_counts}")
+                upload_ok: bool = False
+                try:
+                    async with upload_lock:
+                        result = await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
+                    upload_ok = True
+                except Exception as e:
+                    print(f"[upload] failed err={e}")
+                if upload_ok:
+                    async with state_lock:
+                        state.assignments.update(new_assignments)
+                        state.seen_links.update(new_links)
+                        save_state(state_path, state)
+                    print(f"[state] saved seen+={len(new_links)} assignments+={len(new_assignments)} total_assignments={len(state.assignments)}")
+                    print("[upload] done")
+                else:
+                    print("[state] not saved due to upload failure")
+            print(f"[poll] cycle_end ts={datetime.now().isoformat()}")
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             break
-        except Exception:
+        except Exception as e:
+            print(f"[poll] cycle_error err={e}")
             await asyncio.sleep(interval_seconds)
 
 
