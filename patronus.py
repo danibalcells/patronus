@@ -20,7 +20,7 @@ from dateutil import parser as dateutil_parser
 
 class Bucket(str, Enum):
     REJECT = "REJECT"
-    TECHNICAL_AI_ML = "TECHNICAL_AI_ML"
+    TECHNICAL_AI_AND_ML = "TECHNICAL_AI_AND_ML"
     TECH_BEYOND_THE_TECHNICAL = "TECH_BEYOND_THE_TECHNICAL"
     PHILOSOPHY_CONSCIOUSNESS = "PHILOSOPHY_CONSCIOUSNESS"
     POLITICS_CULTURE = "POLITICS_CULTURE"
@@ -32,7 +32,7 @@ class Bucket(str, Enum):
     def display_name(self) -> str:
         mapping: Dict["Bucket", str] = {
             Bucket.REJECT: "Rejected",
-            Bucket.TECHNICAL_AI_ML: "Technical AI/ML",
+            Bucket.TECHNICAL_AI_AND_ML: "Technical AI/ML",
             Bucket.TECH_BEYOND_THE_TECHNICAL: "Tech Beyond The Technical",
             Bucket.PHILOSOPHY_CONSCIOUSNESS: "Philosophy & Consciousness",
             Bucket.POLITICS_CULTURE: "Politics & Culture",
@@ -310,9 +310,7 @@ def build_source_index(feed_urls: List[str]) -> Tuple[Dict[str, Any], Dict[str, 
                 rss_index.update(idx)
             elif kind == "atom":
                 atom_index.update(idx)
-            print(f"Indexed feed kind={kind} entries={len(idx)} url={feed_url}")
         except Exception as e:
-            print(f"Feed fetch/index failed url={feed_url} err={e}")
             continue
     return rss_index, atom_index, origin_map
 
@@ -424,10 +422,6 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
                         au = etree.SubElement(item_copy, "author"); au.text = fallback
                 channel.append(item_copy)
                 copied_count += 1
-                print(f"RSS item copied bucket={bucket_key.value} link={key}")
-            else:
-                print(f"RSS item missing bucket={bucket_key.value} link={key}")
-        print(f"RSS bucket={bucket_key.value} copied={copied_count} selected={len(selected)}")
         return etree.tostring(rss, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
 
     def _atom_doc(bucket_key: Bucket, selected: List[Article]) -> str:
@@ -450,10 +444,6 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
                         n = etree.SubElement(a, "{%s}name" % ns); n.text = fallback
                 feed.append(entry_copy)
                 copied_count += 1
-                print(f"ATOM entry copied bucket={bucket_key.value} link={key}")
-            else:
-                print(f"ATOM entry missing bucket={bucket_key.value} link={key}")
-        print(f"ATOM bucket={bucket_key.value} copied={copied_count} selected={len(selected)}")
         return etree.tostring(feed, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
 
     storage_client = storage.Client()
@@ -483,8 +473,8 @@ def print_summary(classifications: List[ArticleClassification]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Patronus RSS filter")
-    parser.add_argument("--feeds-path", type=str, default="/Users/dani/code/patronus/feeds")
-    parser.add_argument("--profile-path", type=str, default="/Users/dani/code/patronus/Profile.md")
+    parser.add_argument("--feeds-path", type=str, default="feeds")
+    parser.add_argument("--profile-path", type=str, default="Profile.md")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
