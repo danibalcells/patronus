@@ -190,7 +190,7 @@ def classify_articles(client: OpenAI, profile_text: str, articles: List[Article]
     system_preamble: str = (
         "You are an assistant tasked with selecting content from an RSS feed that is relevant to Dani. "
         "Classify each article into one of the following buckets based on Dani's profile: "
-        "REJECT, TECHNICAL_AI_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
+        "REJECT, TECHNICAL_AI_AND_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
     )
     buckets: Dict[Bucket, List[Article]] = defaultdict(list)
     classifications: List[ArticleClassification] = []
