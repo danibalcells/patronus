@@ -2,10 +2,12 @@ import asyncio
 import argparse
 import json
 import os
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 from datetime import datetime
 
-from openai import OpenAI
+import logging
+from logging.handlers import SysLogHandler
+
 
 from patronus import (
     Bucket,
@@ -26,6 +28,33 @@ class State:
     def __init__(self, seen_links: Optional[Set[str]] = None, assignments: Optional[Dict[str, str]] = None) -> None:
         self.seen_links: Set[str] = seen_links or set()
         self.assignments: Dict[str, str] = assignments or {}
+
+
+logger: logging.Logger = logging.getLogger("patronus.polling_loop")
+
+
+def setup_logging() -> None:
+    if logger.handlers:
+        return
+    logger.setLevel(logging.INFO)
+    syslog_handler: Optional[logging.Handler] = None
+    for address in ["/dev/log", "/var/run/syslog", ("127.0.0.1", 514)]:
+        try:
+            h: SysLogHandler = SysLogHandler(address=address)
+            h.setLevel(logging.INFO)
+            h.setFormatter(logging.Formatter("patronus: %(message)s"))
+            syslog_handler = h
+            break
+        except Exception:
+            continue
+    stream_handler: logging.Handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(name)s [%(levelname)s] %(message)s")
+    )
+    if syslog_handler is not None:
+        logger.addHandler(syslog_handler)
+    logger.addHandler(stream_handler)
 
 
 def _resolve_bucket_value(name: str) -> Optional[str]:
@@ -117,12 +146,12 @@ async def perform_upload(
 async def classify_one(
     link: str,
     meta: Dict,
-    client: OpenAI,
+    client: Any,
     profile_path: str,
     semaphore: asyncio.Semaphore,
 ) -> Tuple[str, str]:
     async with semaphore:
-        print(f"[classify] START link={link}")
+        logger.info("[classify] START link=%s", link)
         profile_text: str = await asyncio.to_thread(read_profile, profile_path)
         articles: List[Article] = await asyncio.to_thread(build_article_list, [meta], None)
         article: Article = articles[0]
@@ -130,7 +159,7 @@ async def classify_one(
             classify_article, client, system_preamble_text(), profile_text, article
         )
         bucket_value: str = classification.bucket.value
-        print(f"[classify] DONE bucket={bucket_value} link={link}")
+        logger.info("[classify] DONE bucket=%s link=%s", bucket_value, link)
         return link, bucket_value
 
 
@@ -142,32 +171,32 @@ async def polling_loop(
     concurrency: int,
     dry_run: bool,
 ) -> None:
-    client: OpenAI = get_openai_client()
+    client: Any = get_openai_client()
     state: State = load_state(state_path)
     state_lock: asyncio.Lock = asyncio.Lock()
     upload_lock: asyncio.Lock = asyncio.Lock()
     semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
     while True:
         try:
-            print(f"[poll] cycle_start ts={datetime.now().isoformat()}")
+            logger.info("[poll] cycle_start ts=%s", datetime.now().isoformat())
             feed_urls: List[str] = read_feed_urls(feeds_path)
             rss_index, atom_index, origin_map = await asyncio.to_thread(build_source_index, feed_urls)
-            print(f"[poll] indexed rss={len(rss_index)} atom={len(atom_index)} feeds={len(feed_urls)}")
+            logger.info("[poll] indexed rss=%d atom=%d feeds=%d", len(rss_index), len(atom_index), len(feed_urls))
             meta_entries: List[Dict] = await asyncio.to_thread(
                 collect_meta_entries_from_index, rss_index, atom_index, origin_map, 10
             )
-            print(f"[poll] collected_meta count={len(meta_entries)}")
+            logger.info("[poll] collected_meta count=%d", len(meta_entries))
             meta_by_link: Dict[str, Dict] = {m.get("link", ""): m for m in meta_entries if m.get("link")}
             current_links: Set[str] = set(meta_by_link.keys())
             new_links: Set[str] = current_links - state.seen_links
-            print(f"[poll] new_links count={len(new_links)}")
+            logger.info("[poll] new_links count=%d", len(new_links))
             if new_links:
                 for link in new_links:
                     meta = meta_by_link.get(link)
                     if meta:
                         title: str = meta.get("title") or ""
-                        print(f"[new] title={title} link={link}")
-                print(f"[classify] start count={len(new_links)} concurrency={concurrency}")
+                        logger.info("[new] title=%s link=%s", title, link)
+                logger.info("[classify] start count=%d concurrency=%d", len(new_links), concurrency)
                 tasks: List[asyncio.Task] = []
                 for link in new_links:
                     meta = meta_by_link.get(link)
@@ -181,40 +210,45 @@ async def polling_loop(
                     link_res, bucket_val = await coro
                     new_assignments[link_res] = bucket_val
                     done_count += 1
-                    print(f"[classify] progress {done_count}/{len(tasks)}")
+                    logger.info("[classify] progress %d/%d", done_count, len(tasks))
                 bucket_counts: Dict[str, int] = {}
                 for _, b in new_assignments.items():
                     bucket_counts[b] = bucket_counts.get(b, 0) + 1
-                print(f"[classify] summary {bucket_counts}")
+                logger.info("[classify] summary %s", bucket_counts)
                 combined_assignments: Dict[str, str] = dict(state.assignments)
                 combined_assignments.update(new_assignments)
                 selection_counts: Dict[str, int] = {}
                 for link, b in combined_assignments.items():
                     if link in rss_index or link in atom_index:
                         selection_counts[b] = selection_counts.get(b, 0) + 1
-                print(f"[upload] begin buckets={selection_counts}")
+                logger.info("[upload] begin buckets=%s", selection_counts)
                 upload_ok: bool = False
                 try:
                     async with upload_lock:
                         await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
                     upload_ok = True
-                except Exception as e:
-                    print(f"[upload] failed err={e}")
+                except Exception:
+                    logger.exception("[upload] failed")
                 if upload_ok:
                     async with state_lock:
                         state.assignments.update(new_assignments)
                         state.seen_links.update(new_links)
                         save_state(state_path, state)
-                    print(f"[state] saved seen+={len(new_links)} assignments+={len(new_assignments)} total_assignments={len(state.assignments)}")
-                    print("[upload] done")
+                    logger.info(
+                        "[state] saved seen+=%d assignments+=%d total_assignments=%d",
+                        len(new_links),
+                        len(new_assignments),
+                        len(state.assignments),
+                    )
+                    logger.info("[upload] done")
                 else:
-                    print("[state] not saved due to upload failure")
-            print(f"[poll] cycle_end ts={datetime.now().isoformat()}")
+                    logger.warning("[state] not saved due to upload failure")
+            logger.info("[poll] cycle_end ts=%s", datetime.now().isoformat())
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            print(f"[poll] cycle_error err={e}")
+        except Exception:
+            logger.exception("[poll] cycle_error")
             await asyncio.sleep(interval_seconds)
 
 
@@ -230,6 +264,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    setup_logging()
     args = parse_args()
     try:
         asyncio.run(
