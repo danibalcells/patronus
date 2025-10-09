@@ -488,6 +488,9 @@ def main() -> None:
     articles: List[Article] = build_article_list(meta_entries, total_limit=total_limit)
     classifications, buckets = classify_articles(client, profile_text, articles)
     print_summary(classifications)
+    if args.dry_run:
+        print("DRY RUN: skipping upload to GCS. No artifacts were written.")
+        return
     public_urls: Dict[str, str] = upload_bucket_feeds(buckets, rss_index, atom_index, origin_map)
     print({k: v for k, v in public_urls.items()})
 
