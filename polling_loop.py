@@ -222,27 +222,40 @@ async def polling_loop(
                     if link in rss_index or link in atom_index:
                         selection_counts[b] = selection_counts.get(b, 0) + 1
                 logger.info("[upload] begin buckets=%s", selection_counts)
-                upload_ok: bool = False
-                try:
-                    async with upload_lock:
-                        await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
-                    upload_ok = True
-                except Exception:
-                    logger.exception("[upload] failed")
-                if upload_ok:
+                if dry_run:
+                    logger.info("[dry-run] skipping upload and disk state persistence")
+                    logger.info("[dry-run] sample_assignments %s", list(new_assignments.items())[:5])
                     async with state_lock:
                         state.assignments.update(new_assignments)
                         state.seen_links.update(new_links)
-                        save_state(state_path, state)
                     logger.info(
-                        "[state] saved seen+=%d assignments+=%d total_assignments=%d",
+                        "[dry-run] in-memory state updated seen+=%d assignments+=%d total_assignments=%d",
                         len(new_links),
                         len(new_assignments),
                         len(state.assignments),
                     )
-                    logger.info("[upload] done")
                 else:
-                    logger.warning("[state] not saved due to upload failure")
+                    upload_ok: bool = False
+                    try:
+                        async with upload_lock:
+                            await perform_upload(combined_assignments, rss_index, atom_index, origin_map, dry_run)
+                        upload_ok = True
+                    except Exception:
+                        logger.exception("[upload] failed")
+                    if upload_ok:
+                        async with state_lock:
+                            state.assignments.update(new_assignments)
+                            state.seen_links.update(new_links)
+                            save_state(state_path, state)
+                        logger.info(
+                            "[state] saved seen+=%d assignments+=%d total_assignments=%d",
+                            len(new_links),
+                            len(new_assignments),
+                            len(state.assignments),
+                        )
+                        logger.info("[upload] done")
+                    else:
+                        logger.warning("[state] not saved due to upload failure")
             logger.info("[poll] cycle_end ts=%s", datetime.now().isoformat())
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
