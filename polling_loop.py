@@ -21,93 +21,22 @@ from patronus import (
     build_article_list,
     classify_article,
     upload_bucket_feeds,
+    setup_logging as setup_core_logging,
+    State,
+    load_state,
+    save_state,
+    upload_from_assignments,
+    system_preamble_text,
 )
-
-
-class State:
-    def __init__(self, seen_links: Optional[Set[str]] = None, assignments: Optional[Dict[str, str]] = None) -> None:
-        self.seen_links: Set[str] = seen_links or set()
-        self.assignments: Dict[str, str] = assignments or {}
 
 
 logger: logging.Logger = logging.getLogger("patronus.polling_loop")
 
 
 def setup_logging() -> None:
-    if logger.handlers:
-        return
+    setup_core_logging()
+    # Ensure this module's logger inherits handlers/level
     logger.setLevel(logging.INFO)
-    syslog_handler: Optional[logging.Handler] = None
-    for address in ["/dev/log", "/var/run/syslog", ("127.0.0.1", 514)]:
-        try:
-            h: SysLogHandler = SysLogHandler(address=address)
-            h.setLevel(logging.INFO)
-            h.setFormatter(logging.Formatter("patronus: %(message)s"))
-            syslog_handler = h
-            break
-        except Exception:
-            continue
-    stream_handler: logging.Handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
-    stream_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(name)s [%(levelname)s] %(message)s")
-    )
-    if syslog_handler is not None:
-        logger.addHandler(syslog_handler)
-    logger.addHandler(stream_handler)
-
-
-def _resolve_bucket_value(name: str) -> Optional[str]:
-    try:
-        # Exact match
-        _ = Bucket(name)
-        return name
-    except Exception:
-        pass
-    try:
-        import difflib
-        candidates: List[str] = [b.value for b in Bucket]
-        matches: List[str] = difflib.get_close_matches(name, candidates, n=1, cutoff=0.8)
-        return matches[0] if matches else None
-    except Exception:
-        return None
-
-
-def load_state(path: str) -> State:
-    if not os.path.exists(path):
-        return State()
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-        seen_list: List[str] = data.get("seen_links", [])
-        assignments_raw: Dict[str, str] = data.get("assignments", {})
-        assignments: Dict[str, str] = {}
-        for link, bucket in assignments_raw.items():
-            resolved: Optional[str] = _resolve_bucket_value(bucket)
-            if resolved is not None:
-                assignments[link] = resolved
-        return State(set(seen_list), dict(assignments))
-    except Exception:
-        return State()
-
-
-def save_state(path: str, state: State) -> None:
-    tmp_path: str = f"{path}.tmp"
-    data = {
-        "seen_links": sorted(list(state.seen_links)),
-        "assignments": state.assignments,
-    }
-    with open(tmp_path, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp_path, path)
-
-
-def system_preamble_text() -> str:
-    return (
-        "You are an assistant tasked with selecting content from an RSS feed that is relevant to Dani. "
-        "Classify each article into one of the following buckets based on Dani's profile: "
-        "REJECT, TECHNICAL_AI_AND_ML, TECH_BEYOND_THE_TECHNICAL, PHILOSOPHY_CONSCIOUSNESS, POLITICS_CULTURE, SPAIN, CHINA, RANDOM_CURIOSITIES."
-    )
 
 
 async def perform_upload(
@@ -117,30 +46,7 @@ async def perform_upload(
     origin_map: Dict[str, Dict[str, str]],
     dry_run: bool,
 ) -> Optional[Dict[str, str]]:
-    buckets: Dict[Bucket, List[Article]] = {b: [] for b in Bucket}
-    for link, bucket_value in assignments.items():
-        if link not in rss_index and link not in atom_index:
-            continue
-        resolved_value: Optional[str] = _resolve_bucket_value(bucket_value)
-        if resolved_value is None:
-            continue
-        bucket_key: Bucket = Bucket(resolved_value)
-        a: Article = {
-            "title": link,
-            "link": link,
-            "content": "",
-            "published": None,
-            "author": None,
-            "feed_title": None,
-            "feed_link": None,
-        }
-        buckets[bucket_key].append(a)
-    has_any: bool = any(len(v) > 0 for v in buckets.values())
-    if not has_any:
-        return None
-    if dry_run:
-        return {}
-    return await asyncio.to_thread(upload_bucket_feeds, buckets, rss_index, atom_index, origin_map)
+    return await asyncio.to_thread(upload_from_assignments, assignments, rss_index, atom_index, origin_map, dry_run)
 
 
 async def classify_one(
