@@ -51,12 +51,14 @@ Set these environment variables (use a shell export or a `.env` file; `python-do
 - `OPENAI_API_KEY` (required): API key used by the OpenAI client.
 - `GCS_BUCKET_NAME` (required for real uploads): Destination bucket for curated feeds.
 - `GCS_PREFIX` (optional): Path prefix within the bucket. Defaults to `patronus/feeds/`.
+- `GCS_CACHE_CONTROL` (optional): Cache-Control header to set on uploaded feed objects. Example: `no-cache, max-age=0, must-revalidate` or `public, max-age=300, must-revalidate`.
 
 Example `.env`:
 ```bash
 OPENAI_API_KEY=sk-...
 GCS_BUCKET_NAME=my-curated-feeds-bucket
 GCS_PREFIX=patronus/feeds/
+GCS_CACHE_CONTROL=no-cache, max-age=0, must-revalidate
 ```
 
 
