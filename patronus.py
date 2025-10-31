@@ -543,6 +543,70 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
     if not gcs_bucket_name:
         raise RuntimeError("Missing GCS_BUCKET_NAME in environment")
 
+    def _ensure_required_rss_fields(item: Any, article: Article, origin: Dict[str, str]) -> None:
+        if item.find("guid") is None:
+            link = article.get("link")
+            if link:
+                guid = etree.SubElement(item, "guid")
+                guid.set("isPermaLink", "true")
+                guid.text = link
+        
+        if item.find("pubDate") is None:
+            pub_dt = article.get("published")
+            if pub_dt and isinstance(pub_dt, datetime):
+                pub_date = etree.SubElement(item, "pubDate")
+                pub_date.text = pub_dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
+            else:
+                pub_date = etree.SubElement(item, "pubDate")
+                pub_date.text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        
+        if item.find("description") is None:
+            content_encoded = item.find("{http://purl.org/rss/1.0/modules/content/}encoded")
+            if content_encoded is None:
+                desc = etree.SubElement(item, "description")
+                summary = article.get("summary", "")
+                if summary:
+                    desc.text = summary
+                else:
+                    title = article.get("title", "")
+                    desc.text = title or "No description available"
+
+    def _ensure_required_atom_fields(entry: Any, article: Article, origin: Dict[str, str]) -> None:
+        ns = "http://www.w3.org/2005/Atom"
+        
+        if entry.find(f"{{{ns}}}id") is None:
+            link = article.get("link")
+            if link:
+                id_el = etree.SubElement(entry, f"{{{ns}}}id")
+                id_el.text = link
+        
+        if entry.find(f"{{{ns}}}updated") is None:
+            pub_dt = article.get("published")
+            if pub_dt and isinstance(pub_dt, datetime):
+                updated = etree.SubElement(entry, f"{{{ns}}}updated")
+                updated.text = pub_dt.isoformat()
+            else:
+                updated = etree.SubElement(entry, f"{{{ns}}}updated")
+                updated.text = datetime.now(timezone.utc).isoformat()
+        
+        if entry.find(f"{{{ns}}}summary") is None and entry.find(f"{{{ns}}}content") is None:
+            summary = article.get("summary", "")
+            if summary:
+                summary_el = etree.SubElement(entry, f"{{{ns}}}summary")
+                summary_el.text = summary
+            else:
+                title = article.get("title", "")
+                summary_el = etree.SubElement(entry, f"{{{ns}}}summary")
+                summary_el.text = title or "No summary available"
+        
+        existing_links = entry.xpath(f"atom:link[@rel='alternate']", namespaces={"atom": ns})
+        if not existing_links:
+            link = article.get("link")
+            if link:
+                link_el = etree.SubElement(entry, f"{{{ns}}}link")
+                link_el.set("rel", "alternate")
+                link_el.set("href", link)
+
     def _rss_doc(bucket_key: Bucket, selected: List[Article]) -> str:
         rss = etree.Element("rss", attrib={"version": "2.0"})
         channel = etree.SubElement(rss, "channel")
@@ -561,6 +625,8 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
                     fallback = (origin.get("feed_author") or origin.get("feed_title") or "").strip()
                     if fallback:
                         au = etree.SubElement(item_copy, "author"); au.text = fallback
+                origin = origin_map.get(key, {})
+                _ensure_required_rss_fields(item_copy, it, origin)
                 channel.append(item_copy)
                 copied_count += 1
         return etree.tostring(rss, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
@@ -583,6 +649,8 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
                     if fallback:
                         a = etree.SubElement(entry_copy, "{%s}author" % ns)
                         n = etree.SubElement(a, "{%s}name" % ns); n.text = fallback
+                origin = origin_map.get(key, {})
+                _ensure_required_atom_fields(entry_copy, it, origin)
                 feed.append(entry_copy)
                 copied_count += 1
         return etree.tostring(feed, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
