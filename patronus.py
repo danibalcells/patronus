@@ -47,6 +47,18 @@ def setup_logging() -> None:
     logger.addHandler(stream_handler)
 
 
+def load_project_env() -> None:
+    try:
+        base_dir: str = os.path.dirname(os.path.abspath(__file__))
+        for name in [".env", ".env.cron"]:
+            path: str = os.path.join(base_dir, name)
+            if os.path.exists(path):
+                load_dotenv(dotenv_path=path, override=False)
+    except Exception:
+        # Environment loading is best-effort; continue silently on failure
+        pass
+
+
 class State:
     def __init__(self, seen_links: Optional[Set[str]] = None, assignments: Optional[Dict[str, str]] = None) -> None:
         self.seen_links: Set[str] = seen_links or set()
@@ -145,7 +157,7 @@ class ArticleClassification(BaseModel):
 
 
 def get_openai_client() -> OpenAI:
-    load_dotenv()
+    load_project_env()
     api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("Missing OPENAI_API_KEY in environment")
@@ -519,9 +531,15 @@ def collect_meta_entries_from_index(rss_index: Dict[str, Any], atom_index: Dict[
 
 def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[str, Any], atom_index: Dict[str, Any], origin_map: Dict[str, Dict[str, str]]) -> Dict[str, str]:
     from google.cloud import storage
-    load_dotenv()
+    load_project_env()
     gcs_bucket_name: str = os.getenv("GCS_BUCKET_NAME", "")
     gcs_prefix: str = os.getenv("GCS_PREFIX", "patronus/feeds/").lstrip("/")
+    gcs_cache_control: str = os.getenv("GCS_CACHE_CONTROL", "").strip()
+    project_id: Optional[str] = (
+        os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("GCLOUD_PROJECT")
+        or os.getenv("CLOUDSDK_CORE_PROJECT")
+    )
     if not gcs_bucket_name:
         raise RuntimeError("Missing GCS_BUCKET_NAME in environment")
 
@@ -569,7 +587,7 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
                 copied_count += 1
         return etree.tostring(feed, pretty_print=True, xml_declaration=True, encoding="UTF-8").decode("utf-8")
 
-    storage_client = storage.Client()
+    storage_client = storage.Client(project=project_id) if project_id else storage.Client()
     gcs_bucket = storage_client.bucket(gcs_bucket_name)
     public_urls: Dict[str, str] = {}
     selection_counts: Dict[str, int] = {}
@@ -582,8 +600,12 @@ def upload_bucket_feeds(buckets: Dict[Bucket, List[Article]], rss_index: Dict[st
         rss_key = f"{gcs_prefix}{b.value}.rss.xml"
         atom_key = f"{gcs_prefix}{b.value}.atom.xml"
         rss_blob = gcs_bucket.blob(rss_key)
+        if gcs_cache_control:
+            rss_blob.cache_control = gcs_cache_control
         rss_blob.upload_from_string(rss_xml, content_type="application/rss+xml")
         atom_blob = gcs_bucket.blob(atom_key)
+        if gcs_cache_control:
+            atom_blob.cache_control = gcs_cache_control
         atom_blob.upload_from_string(atom_xml, content_type="application/atom+xml; charset=utf-8")
         public_urls[f"{b.value}:rss"] = rss_blob.public_url
         public_urls[f"{b.value}:atom"] = atom_blob.public_url
@@ -677,19 +699,36 @@ def main() -> None:
     combined_assignments: Dict[str, str] = dict(state.assignments)
     combined_assignments.update(new_assignments)
 
-    result: Optional[Dict[str, str]] = upload_from_assignments(combined_assignments, rss_index, atom_index, origin_map, args.dry_run)
+    upload_ok: bool = True
+    result: Optional[Dict[str, str]] = None
+    try:
+        result = upload_from_assignments(combined_assignments, rss_index, atom_index, origin_map, args.dry_run)
+    except Exception:
+        logger.exception("upload failed")
+        upload_ok = False
+
     if args.dry_run:
         print("DRY RUN: skipping upload to GCS. No artifacts were written.")
     else:
-        if result is not None:
-            print({k: v for k, v in result.items()})
+        if upload_ok:
+            if result is not None:
+                print({k: v for k, v in result.items()})
+            else:
+                print("No artifacts to upload.")
         else:
-            print("No artifacts to upload.")
+            print("Upload failed. See logs for details.")
 
-    # Persist state only on real runs and when path provided
-    if not args.dry_run and args.state_path:
+    # Persist state with explicit logging for all cases
+    if args.dry_run:
+        logger.info("dry-run: skipping state save")
+    elif not args.state_path:
+        logger.info("no state path provided: skipping state save")
+    elif not upload_ok:
+        logger.warning("upload failed: state not saved")
+    else:
         state.assignments.update(new_assignments)
         state.seen_links.update(new_links)
+        logger.info("saving state path=%s seen+=%d assignments+=%d", args.state_path, len(new_links), len(new_assignments))
         save_state(args.state_path, state)
 
 
