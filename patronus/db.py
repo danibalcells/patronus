@@ -57,6 +57,26 @@ class Feed(SQLModel, table=True):
     active: bool = Field(default=True, index=True)
 
 
+class DigestRecord(SQLModel, table=True):
+    __tablename__ = "digests"
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    generated_at: str = Field(default_factory=_now_utc)
+    item_count: int = Field(default=0)
+    formatted_text: Optional[str] = None
+
+
+class DigestItemRecord(SQLModel, table=True):
+    __tablename__ = "digest_items"
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    digest_id: str = Field(foreign_key="digests.id", index=True)
+    item_id: str = Field(foreign_key="items.id", index=True)
+    summary: Optional[str] = None
+    score: float = Field(default=0.0)
+    matched_topic: Optional[str] = None
+
+
 class Database:
     def __init__(self, db_path: str = "db.sqlite3") -> None:
         self.db_path = db_path
@@ -237,3 +257,52 @@ class Database:
                 self.add_feed(url=url)
                 count += 1
         return count
+
+    # ------------------------------------------------------------------
+    # Digests
+    # ------------------------------------------------------------------
+
+    def save_digest(
+        self,
+        generated_at: str,
+        item_count: int,
+        formatted_text: Optional[str],
+        items: list[dict[str, object]],
+    ) -> str:
+        digest = DigestRecord(
+            generated_at=generated_at,
+            item_count=item_count,
+            formatted_text=formatted_text,
+        )
+        with self._session() as session:
+            session.add(digest)
+            for entry in items:
+                record = DigestItemRecord(
+                    digest_id=digest.id,
+                    item_id=str(entry["item_id"]),
+                    summary=str(entry.get("summary") or ""),
+                    score=float(entry.get("score", 0.0)),
+                    matched_topic=str(entry.get("matched_topic") or ""),
+                )
+                session.add(record)
+            session.commit()
+            return digest.id
+
+    def get_latest_digests(self, n: int = 5) -> list[DigestRecord]:
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(DigestRecord)
+                    .order_by(DigestRecord.generated_at.desc())
+                    .limit(n)
+                ).all()
+            )
+
+    def get_digest_items(self, digest_id: str) -> list[DigestItemRecord]:
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(DigestItemRecord)
+                    .where(DigestItemRecord.digest_id == digest_id)
+                ).all()
+            )

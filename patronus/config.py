@@ -22,7 +22,8 @@ class DigestConfig:
     size: int = 7
     max_per_topic: int = 3
     schedule: str = "08:00"
-    timezone: str = "Europe/Madrid"
+    timezone: str = "America/New_York"
+    repeat_penalty: float = 0.85
 
 
 @dataclass

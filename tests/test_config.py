@@ -85,7 +85,7 @@ class TestLoadConfig:
         assert cfg.digest.size == 7
         assert cfg.digest.max_per_topic == 3
         assert cfg.digest.schedule == "08:00"
-        assert cfg.digest.timezone == "Europe/Madrid"
+        assert cfg.digest.timezone == "America/New_York"
         assert cfg.polling.interval_hours == 2
         assert cfg.embedding.model == "text-embedding-3-small"
         assert cfg.topics == {}

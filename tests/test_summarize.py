@@ -88,7 +88,7 @@ class TestSummarizeItem:
         summarize_item(title="T", text="txt", interest_description="d")
         call_kwargs = client.messages.create.call_args[1]
         assert "system" in call_kwargs
-        assert "2-3 sentence" in call_kwargs["system"]
+        assert "2 sentences" in call_kwargs["system"]
 
     @patch("patronus.summarize.anthropic.Anthropic")
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test"})

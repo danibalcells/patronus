@@ -1,8 +1,8 @@
 digest:
-  size: 7
+  size: 10
   max_per_topic: 3
   schedule: "08:00"
-  timezone: "Europe/Madrid"
+  timezone: "America/New_York"
 
 polling:
   interval_hours: 2
@@ -11,7 +11,7 @@ embedding:
   model: "text-embedding-3-small"
 
 summarization:
-  model: "claude-sonnet-4-20250514"
+  model: "claude-haiku-4-5-20251001"
 
 telegram:
   chat_id: ""

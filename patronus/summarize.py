@@ -10,9 +10,11 @@ _client: Optional[anthropic.Anthropic] = None
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
 _SYSTEM_PROMPT = (
-    "You generate concise 2-3 sentence summaries of articles for a personalized "
-    "reading digest. Focus on why the article is relevant to the reader's specific "
-    "interests. Be direct and informative, not promotional."
+    "You write very short summaries (2 sentences max, ~40 words total) of pre-curated articles "
+    "for a daily reading digest. Say what the piece is about and why it's relevant to the reader's interests. "
+    "No filler, no preamble, no promotional language."
+    "Don't start with 'This article is about...' or 'The article discusses...' but rather go straight to the point."
+    "Don't structure your response in paragraphs, bullets or titles, just write a single paragraph."
 )
 
 
@@ -34,7 +36,7 @@ def summarize_item(
     client = _get_client()
     response = client.messages.create(
         model=model,
-        max_tokens=256,
+        max_tokens=128,
         system=_SYSTEM_PROMPT,
         messages=[
             {
