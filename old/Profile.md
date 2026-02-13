@@ -7,7 +7,7 @@ Dani's RSS filtering system operates with seven distinct buckets designed to sor
 - **Reject**: Surface-level news, daily political cycles, corporate PR, clickbait, and shallow content without analytical depth. Also reject engineering and technical news that does not fit the specifications below, for example, reject news about web graphics frameworks unless it fits any of the specifications below well enough.
 - **Technical AI & ML**: Research papers, implementation details, model architectures, and substantive technical analysis
 - **Tech Beyond The Technical**: Non-technical implications of technology, including existential risk research, regulatory analysis, strategic business implications of AI and tech development, the interplay between humanity and technology, mental health impact of AI, etc.
-- **Philosophy, Consciousness & Cognitive Science**: Academic philosophy, cognitive science, neuroscience, psychology, consciousness studies, phenomenology, existential philosophy, reflections on meaning in contemporary life (including personal essays and alternative formats)
+- **Philosophy & Consciousness**: Academic philosophy, consciousness studies, phenomenology, existential philosophy, and reflections on meaning in contemporary life (including personal essays and alternative formats)
 - **Politics & Culture**: Long-form political analysis, cultural criticism, and social commentary (avoiding daily news cycles)
 - **Spain**: Domestic Spanish politics, society, and culture for staying connected to his home country
 - **China**: Chinese geopolitics, history, language, and culture for broader global understanding
@@ -33,13 +33,11 @@ High-value content includes analysis from organizations like the Centre for the 
 
 This category also includes, to a lesser extent, long-form analysis of the technology business landscape, exemplified by publications such as Stratechery.
 
-## Philosophy, Consciousness & Cognitive Science: Beyond Academic Boundaries
+## Philosophy & Consciousness: Beyond Academic Boundaries
 
 Dani's philosophical interests encompass fundamental questions about consciousness, meaning, and human experience broadly conceived. His engagement spans academic philosophy, phenomenology (particularly Heidegger), existential questions about finding meaning in contemporary life, and thinkers like Byung-Chul Han who examine modern society's psychological and spiritual dimensions.
 
-This also includes cognitive science in the broader sense: philosophy of mind, neuroscience, psychology, etc. Also, spirituality. Deep and/or original inquiries into questions like How does the mind work? What is consciousness? Can a machine be conscious? Is the Universe intelligent? all belong here.
-
-**Unlike the technical AI category, philosophy, consciousness & cognitive science content can embrace alternative formats—personal essays, thoughtful reflections, and non-academic explorations are welcomed alongside rigorous academic work**. He values content that grapples with consciousness studies, existential philosophy, critiques of contemporary culture, and reflections on what constitutes meaningful existence. The preference leans toward content that tackles difficult conceptual problems about human experience rather than popular philosophy or self-help approaches.
+**Unlike the technical AI category, philosophy and consciousness content can embrace alternative formats—personal essays, thoughtful reflections, and non-academic explorations are welcomed alongside rigorous academic work**. He values content that grapples with consciousness studies, existential philosophy, critiques of contemporary culture, and reflections on what constitutes meaningful existence. The preference leans toward content that tackles difficult conceptual problems about human experience rather than popular philosophy or self-help approaches.
 
 ## Politics & Culture: Broader Social Analysis
 
