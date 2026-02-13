@@ -3,11 +3,12 @@ topics:
     name: "Technical AI/ML"
     description: |
       Technical machine learning research with emphasis on mechanistic
-      interpretability, training dynamics, model architectures, and scaling laws.
+      interpretability, RL, AI safety and alignment, and latent space topologies.
       Deep dives into neural network internals: circuit analysis, feature
       visualization, superposition, sparse autoencoders, and probing techniques.
-      Novel architectures, optimization methods, and rigorous empirical studies
-      of model behavior. Academic papers, detailed technical blog posts, and
+      Safety and alignment research broadly: evaluations, deception, eval awareness,
+      emergent misalignment, adversarial robustness, etc.
+      Academic papers, detailed technical blog posts, and
       implementation analyses. In-depth coverage of major model releases.
 
   tech_strategy:

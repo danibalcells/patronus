@@ -21,6 +21,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
 
     limit = args.limit
     feed_limit = args.feed_limit

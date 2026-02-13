@@ -189,11 +189,21 @@ def poll_feeds(
     if not skip_embed:
         embeddable_indices = [i for i, p in enumerate(pending) if p["text"]]
         if embeddable_indices:
+            logger.info(
+                "Embedding %d items:", len(embeddable_indices)
+            )
+            for i in embeddable_indices:
+                logger.info(
+                    "  → %s (%s)",
+                    pending[i]["title"] or "untitled",
+                    pending[i]["url"],
+                )
             try:
                 texts = [pending[i]["text"] for i in embeddable_indices]
                 results = embed_batch(texts)
                 for idx, emb in zip(embeddable_indices, results):
                     embeddings[idx] = emb
+                logger.info("Embedding complete")
             except Exception:
                 logger.exception(
                     "Batch embedding failed; storing items without embeddings"

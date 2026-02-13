@@ -93,6 +93,35 @@ class TestEmbedBatch:
         np.testing.assert_allclose(results[1], [0.9, 0.9], atol=1e-6)
 
 
+class TestBatchChunking:
+    @patch("patronus.embed._MAX_CHARS_PER_BATCH", 10)
+    @patch("patronus.embed._get_client")
+    def test_splits_into_chunks(self, mock_get: MagicMock) -> None:
+        client = MagicMock()
+        mock_get.return_value = client
+        client.embeddings.create.side_effect = [
+            _make_embedding_response([[0.1, 0.2]]),
+            _make_embedding_response([[0.3, 0.4]]),
+        ]
+        results = embed_batch(["abcdefghij", "klmnopqrst"])
+        assert client.embeddings.create.call_count == 2
+        assert len(results) == 2
+        np.testing.assert_allclose(results[0], [0.1, 0.2], atol=1e-6)
+        np.testing.assert_allclose(results[1], [0.3, 0.4], atol=1e-6)
+
+    @patch("patronus.embed._MAX_CHARS_PER_BATCH", 100)
+    @patch("patronus.embed._get_client")
+    def test_fits_in_one_chunk(self, mock_get: MagicMock) -> None:
+        client = MagicMock()
+        mock_get.return_value = client
+        client.embeddings.create.return_value = _make_embedding_response(
+            [[0.1], [0.2]]
+        )
+        results = embed_batch(["short", "texts"])
+        assert client.embeddings.create.call_count == 1
+        assert len(results) == 2
+
+
 class TestLazyClient:
     @patch("patronus.embed.OpenAI")
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-key"})
