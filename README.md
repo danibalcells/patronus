@@ -1,166 +1,203 @@
-## Patronus
+# Patronus
 
-Curate high-signal RSS/Atom content into topic-specific feeds using an LLM + a human profile, and publish the curated feeds to Google Cloud Storage (GCS).
+A personal research and reading assistant that aggregates content from RSS/Atom feeds, ranks it by relevance to current intellectual interests using embedding similarity, and delivers a curated daily digest via Telegram.
 
-### Key features
-- **Classification by profile**: Articles are classified into buckets using `OpenAI` Chat Completions with `Profile.md` as guidance.
-- **Non-destructive dry run**: Safely test end-to-end without uploading or persisting state.
-- **Per-bucket outputs**: Generates both RSS and Atom feeds per category.
-- **Continuous mode**: Async polling loop that detects new links and classifies concurrently.
+The system monitors dozens of feeds spanning technical ML research, tech commentary, philosophy, linguistics, and more. It filters at volume so you don't have to — embedding-based ranking (not LLM-as-judge) selects ~7 high-signal items per day, and an LLM generates contextual summaries only after selection.
 
-### Buckets
-`REJECT`, `TECHNICAL_AI_AND_ML`, `TECH_BEYOND_THE_TECHNICAL`, `PHILOSOPHY_CONSCIOUSNESS`, `POLITICS_CULTURE`, `SPAIN`, `CHINA`, `RANDOM_CURIOSITIES`.
+The project is implemented in stages, each independently useful. See the [Linear project](https://linear.app/danibalcells/project/patronus-v2-f37a12c58fed) for current status.
 
+## Stage 1 architecture
 
-## Repository structure
-- `patronus.py`: Batch run. Reads feeds + profile, classifies, prints summary, and (if not dry-run) uploads curated feeds to GCS.
-- `polling_loop.py`: Continuous async loop. Re-indexes feeds, classifies new links concurrently, and (if not dry-run) uploads and persists state.
-- `Profile.md`: Curation criteria that drive classification buckets.
-- `feeds` (path provided at runtime): Text file with feed URLs, one per line.
-- `pyproject.toml`: Python project metadata and dependencies.
-- `uv.lock`: Lockfile if you use `uv` for dependency management.
+### Module structure
 
+```
+patronus/                   # Core library — all business logic lives here
+├── __init__.py
+├── config.py               # Load YAML config + env vars → Config dataclass
+├── db.py                   # SQLModel models (Item, Feed) + Database class
+├── ingest.py               # Feed polling, content extraction, manual URL add
+├── embed.py                # Embedding API wrapper (text-embedding-3-small)
+├── interests.py            # Load interest vectors (Stage 1: YAML→embed)
+├── rank.py                 # Cosine similarity, recency boost, diversity selection
+├── summarize.py            # Claude API for contextual summaries
+├── digest.py               # Orchestrator: rank → select → summarize → Digest
+└── telegram.py             # Bot handlers + direct message sending
 
-## Requirements
-- Python 3.11+
-- Google Cloud account with a project and a GCS bucket
-- `gcloud` CLI installed and authenticated for local development
+scripts/                    # Thin entry points — each is ~20 lines
+├── poll_feeds.py           # Cron: poll all active feeds, ingest new items
+├── send_digest.py          # Cron: generate digest, send via Telegram
+├── seed_feeds.py           # One-off: seed DB from feeds file
+└── run_bot.py              # Systemd: start the Telegram bot (long-running)
 
+config/
+├── config.yaml             # Schedule, digest size, model names, Telegram chat ID
+└── interests.yaml          # Static interest descriptions (one paragraph per topic)
 
-## Installation
-You can use either `uv` or plain `pip`.
-
-### Using uv (recommended if available)
-```bash
-cd /home/dani/code/patronus
-uv sync
+tests/
+└── ...
 ```
 
-### Using pip
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install feedgen feedparser google-cloud-storage openai pydantic python-dotenv trafilatura jupyter ipython
+### Module responsibilities
+
+**`config.py`** — Single source of truth for runtime configuration. Loads `config/config.yaml` for schedule, model settings, Telegram chat ID, digest size, etc. Loads `config/interests.yaml` for per-topic interest descriptions. API keys come from env vars (`.env`), not YAML. Exposes a `Config` dataclass that other modules accept as a parameter.
+
+**`db.py`** — SQLModel models (`Item`, `Feed`) and a `Database` class that wraps all SQLite access. Feed URLs are seeded from a file but the DB is the source of truth for feed state. No other module touches SQLite directly.
+
+**`embed.py`** — Thin wrapper around the OpenAI embedding API. Exposes `embed_text()` and `embed_batch()`. Stateless — callers manage caching. Easy to swap models later by changing only this module.
+
+**`interests.py`** — Loads interest descriptions and produces embedding vectors. In Stage 1, reads from `config/interests.yaml` and embeds via `embed.py`. In Stage 2, this gets swapped for Notion-derived centroids. This module is the seam between stages — downstream code (`rank.py`, `digest.py`) receives `dict[str, np.ndarray]` and doesn't care where it came from.
+
+**`ingest.py`** — Feed polling and content extraction. `poll_feeds()` iterates active feeds from the DB, parses with `feedparser`, deduplicates by URL, extracts full text with `trafilatura`, embeds via `embed.py`, and stores via `db.add_item()`. `ingest_url()` handles manual URL adds (same pipeline, single URL). Returns new item IDs so post-ingest hooks (e.g., Stage 3 interrupt alerts) can be added without structural changes.
+
+**`rank.py`** — Ranking and selection. `rank_unread()` loads all unread items, computes cosine similarity against each topic centroid (max across centroids), applies a gentle recency boost, and returns a sorted list of `ScoredItem`s. `select_digest()` applies a topic diversity constraint (no more than ~3 from any single cluster) and returns the top N. All numpy, no API calls.
+
+**`summarize.py`** — Calls the Claude API to generate 2–3 sentence contextual summaries for selected items, given the matched interest description as context. One API call per item.
+
+**`digest.py`** — Orchestrates the full daily digest pipeline: load interest vectors → rank unread items → select top ~7 → summarize each → build a `Digest` dataclass. Also handles formatting for Telegram delivery. Both the `/digest` bot command and the cron script call the same `generate_digest()` function.
+
+**`telegram.py`** — Telegram bot using `python-telegram-bot`. Handles `/add <url>` (triggers `ingest.ingest_url()`), `/digest` (triggers `digest.generate_digest()`), and `/status`. Also exposes `send_digest()` for the cron script to send messages without a running bot process.
+
+### Data flow
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                        SCHEDULING                        │
+│                                                          │
+│  Cron (every 2h):         Cron (daily 8am):              │
+│  scripts/poll_feeds.py    scripts/send_digest.py         │
+│         │                        │                       │
+│         ▼                        ▼                       │
+│    ingest.poll_feeds()     digest.generate_digest()      │
+│         │                        │                       │
+│    ┌────┴────┐          ┌────────┼──────────┐            │
+│    ▼         ▼          ▼        ▼          ▼            │
+│  embed    db.add    interests  rank    summarize         │
+│    │      _item()   .load()  .rank()  .summarize()       │
+│    │         │          │        │          │             │
+│    │         ▼          │        │          │             │
+│    └──────►SQLite◄──────┘────────┘          │             │
+│                                             ▼            │
+│  Systemd (long-running):              telegram           │
+│  scripts/run_bot.py                   .send_digest()     │
+│    /add → ingest.ingest_url()                            │
+│    /digest → digest.generate_digest()                    │
+│    /status → db queries                                  │
+└─────────────────────────────────────────────────────────┘
 ```
 
+### Dependency graph
 
-## Configuration
-Set these environment variables (use a shell export or a `.env` file; `python-dotenv` is loaded automatically):
+No cycles. Each module depends only on modules above it in this list:
 
-- `OPENAI_API_KEY` (required): API key used by the OpenAI client.
-- `GCS_BUCKET_NAME` (required for real uploads): Destination bucket for curated feeds.
-- `GCS_PREFIX` (optional): Path prefix within the bucket. Defaults to `patronus/feeds/`.
-- `GCS_CACHE_CONTROL` (optional): Cache-Control header to set on uploaded feed objects. Example: `no-cache, max-age=0, must-revalidate` or `public, max-age=300, must-revalidate`.
+```
+config         ← (no internal deps)
+db             ← (no internal deps)
+embed          ← config
+interests      ← config, embed
+ingest         ← config, db, embed
+rank           ← config, db
+summarize      ← config
+digest         ← config, db, embed, interests, rank, summarize
+telegram       ← config, db, ingest, digest
+```
 
-Example `.env`:
-```bash
+### Config structure
+
+**`config/config.yaml`:**
+```yaml
+digest:
+  size: 7
+  max_per_topic: 3
+  schedule: "08:00"
+  timezone: "Europe/Madrid"
+
+polling:
+  interval_hours: 2
+
+embedding:
+  model: "text-embedding-3-small"
+
+summarization:
+  model: "claude-sonnet-4-20250514"
+
+telegram:
+  chat_id: "..."
+```
+
+**`config/interests.yaml`:**
+```yaml
+topics:
+  technical_ml:
+    name: "Technical AI/ML"
+    description: |
+      Technical machine learning research, especially mechanistic
+      interpretability, training dynamics, ...
+  tech_strategy:
+    name: "Tech & Strategy"
+    description: |
+      ...
+```
+
+**Environment variables (`.env`):**
+```
 OPENAI_API_KEY=sk-...
-GCS_BUCKET_NAME=my-curated-feeds-bucket
-GCS_PREFIX=patronus/feeds/
-GCS_CACHE_CONTROL=no-cache, max-age=0, must-revalidate
+ANTHROPIC_API_KEY=sk-ant-...
+TELEGRAM_BOT_TOKEN=...
 ```
 
+### Scripts and deployment
 
-## Google Cloud authentication
-The Python GCS client uses Application Default Credentials (ADC).
+Each script in `scripts/` is a thin entry point that loads config, opens the DB, calls a library function, and exits. Scripts add the project root to `sys.path` so `import patronus` works without installation.
 
-Local developer setup (user credentials):
+**Crontab:**
+```
+0 */2 * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
+0 8  * * * cd /path/to/patronus && .venv/bin/python scripts/send_digest.py
+```
+
+**Systemd (Telegram bot):**
+```ini
+[Service]
+WorkingDirectory=/path/to/patronus
+ExecStart=/path/to/patronus/.venv/bin/python scripts/run_bot.py
+Restart=on-failure
+```
+
+### Design decisions
+
+- **Embeddings for ranking, LLM for summaries only.** LLM-as-judge always finds a reason something is relevant. Embedding similarity measures geometric proximity to actual intellectual activity without confabulating.
+- **SQLModel over raw sqlite3.** The schema spec called for raw sqlite3, but SQLModel was chosen during implementation — it's thin enough (typed access over SQLite) and already done with tests.
+- **scripts/ + cron over APScheduler.** The scheduled jobs are independent and short-lived. Cron is transparent, debuggable, and doesn't require an extra dependency. The Telegram bot is the only long-running process.
+- **`interests.py` as the stage boundary.** This module is the seam between Stage 1 (static YAML descriptions) and Stage 2 (live Notion centroids). Everything downstream receives `dict[str, np.ndarray]` and doesn't care where it came from.
+- **Deliberately lossy.** The system does not try to ensure you see everything. It tries to ensure that what you see is worth your time.
+
+### Ticket mapping
+
+| Module | Primary ticket |
+|---|---|
+| `config.py`, `config/*.yaml` | DAN-10 (interests.yaml is DAN-8) |
+| `db.py` | DAN-6 ✅ |
+| `embed.py` | DAN-7 (created here, used by DAN-8) |
+| `ingest.py` | DAN-7 |
+| `interests.py` | DAN-8 |
+| `rank.py` | DAN-8 |
+| `summarize.py` | DAN-8 |
+| `digest.py` | DAN-8 |
+| `telegram.py` | DAN-9 |
+| `scripts/*` | DAN-10 |
+
+## Development
+
+### Setup
 ```bash
-gcloud auth application-default login
-gcloud config set project <YOUR_PROJECT_ID>
+uv sync
+source .venv/bin/activate
 ```
 
-Service account option:
+### Tests
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/service-account.json
-gcloud config set project <YOUR_PROJECT_ID>
+pytest
 ```
 
-Ensure the identity used (user or service account) has permissions to write to the bucket (e.g., `roles/storage.objectAdmin` on the target bucket).
-
-
-## Feeds and profile
-- `Profile.md` describes the curation rules and buckets.
-- The feeds file is a plain text file, one feed URL per line. Example:
-```text
-https://example.com/feed.xml
-https://another.example.org/atom.xml
-```
-
-
-## Running the batch mode
-Classifies a limited set of recent entries and uploads curated feeds (unless `--dry-run`).
-
-```bash
-python /home/dani/code/patronus/patronus.py \
-  --feeds-path /abs/path/to/feeds \
-  --profile-path /home/dani/code/patronus/Profile.md
-```
-
-Dry run (no uploads, safer for testing):
-```bash
-python /home/dani/code/patronus/patronus.py \
-  --feeds-path /abs/path/to/feeds \
-  --profile-path /home/dani/code/patronus/Profile.md \
-  --dry-run
-```
-
-Notes:
-- In dry run, classification still happens and a summary is printed; uploads are skipped.
-- The batch script caps total items (40 in dry run, 50 otherwise).
-
-
-## Running the continuous polling loop
-Polls on an interval, classifies new links concurrently, and uploads curated feeds.
-
-```bash
-python /home/dani/code/patronus/polling_loop.py \
-  --feeds-path /abs/path/to/feeds \
-  --profile-path /home/dani/code/patronus/Profile.md \
-  --state-path /home/dani/code/patronus/.patronus_poll_state.json \
-  --interval-seconds 60 \
-  --concurrency 8
-```
-
-Dry run (no uploads or disk state persistence):
-```bash
-python /home/dani/code/patronus/polling_loop.py \
-  --feeds-path /abs/path/to/feeds \
-  --profile-path /home/dani/code/patronus/Profile.md \
-  --state-path /home/dani/code/patronus/.patronus_poll_state.json \
-  --interval-seconds 60 \
-  --concurrency 8 \
-  --dry-run
-```
-
-Notes:
-- In dry run, in-memory state is updated so duplicates are avoided during the same process run, but nothing is written to disk and nothing is uploaded.
-- On real runs, `--state-path` stores `seen_links` and `assignments` to avoid reprocessing across restarts.
-
-
-## Output
-For each bucket, two artifacts are produced (on real runs):
-- RSS: `${GCS_PREFIX}${BUCKET}.rss.xml`
-- Atom: `${GCS_PREFIX}${BUCKET}.atom.xml`
-
-Public URLs are logged/printed after upload.
-
-
-## Logging
-- Logs are emitted to stdout and, when available, to the system log via `SysLogHandler`.
-- Useful signals include poll cycles, number of indexed items, new link counts, classification progress, and upload status.
-
-
-## How classification works (high level)
-- For each candidate article, the HTML is fetched and cleaned with `trafilatura` (falling back to the feed summary when needed).
-- The OpenAI Chat Completions API (`gpt-5-mini`, JSON mode) assigns a bucket using the guidance in `Profile.md`.
-- The system aggregates articles by bucket, then composes per-bucket RSS and Atom feeds, preserving as much original metadata as possible and adding fallbacks for missing author info.
-
-
-## Troubleshooting
-- If uploads fail, verify `GCS_BUCKET_NAME`, project selection (`gcloud config get-value project`), and credentials (`gcloud auth application-default print-access-token`).
-- If articles reprocess repeatedly, confirm that `--state-path` is consistent and writable on real runs. In dry run, no disk state is saved.
-- Ensure feed URLs are reachable and return valid RSS/Atom; malformed feeds will be skipped.
-
-
+### Legacy code
+The `old/` folder contains Patronus v1 — a many-to-many RSS filter that classified articles into topic buckets and published curated feeds to GCS. That approach was replaced by the embedding-based system described above.

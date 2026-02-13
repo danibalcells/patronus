@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+Scripts in `scripts/` are thin entry points that add the project root to `sys.path` before importing from the `patronus` package. Every script should start with:
+
+```python
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+```
+
+This ensures `import patronus` works without requiring the package to be installed in editable mode.
