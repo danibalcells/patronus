@@ -1,0 +1,17 @@
+digest:
+  size: 7
+  max_per_topic: 3
+  schedule: "08:00"
+  timezone: "Europe/Madrid"
+
+polling:
+  interval_hours: 2
+
+embedding:
+  model: "text-embedding-3-small"
+
+summarization:
+  model: "claude-sonnet-4-20250514"
+
+telegram:
+  chat_id: ""

@@ -1,0 +1,77 @@
+topics:
+  technical_ml:
+    name: "Technical AI/ML"
+    description: |
+      Technical machine learning research with emphasis on mechanistic
+      interpretability, training dynamics, model architectures, and scaling laws.
+      Deep dives into neural network internals: circuit analysis, feature
+      visualization, superposition, sparse autoencoders, and probing techniques.
+      Novel architectures, optimization methods, and rigorous empirical studies
+      of model behavior. Academic papers, detailed technical blog posts, and
+      implementation analyses. In-depth coverage of major model releases.
+
+  tech_strategy:
+    name: "Tech & Strategy"
+    description: |
+      The broader implications of technology and AI beyond the technical: AI
+      safety and alignment research, existential risk analysis, governance
+      frameworks, and regulatory approaches. Business strategy in tech,
+      particularly platform economics, AI industry structure, and competitive
+      dynamics. How AI development intersects with institutional incentives,
+      labor markets, and societal structures. The interplay between humanity
+      and technology, including psychological and cultural impact of AI.
+
+  philosophy:
+    name: "Philosophy & Consciousness"
+    description: |
+      Philosophy of mind and consciousness studies, phenomenology especially
+      Heidegger, and existential philosophy. The nature of subjective
+      experience, what it means for machines to think, and how consciousness
+      relates to computation. Critiques of modern society's psychological and
+      spiritual dimensions in the tradition of Byung-Chul Han. Reflections on
+      meaning, authenticity, and human experience in contemporary life. Both
+      academic philosophy and thoughtful personal essays that grapple with
+      fundamental questions about existence.
+
+  politics_culture:
+    name: "Politics & Culture"
+    description: |
+      Long-form political analysis and cultural criticism beyond the daily
+      news cycle. Structural analysis of political movements, institutional
+      dynamics, and cultural shifts. Populism, religious influence on policy,
+      and social movements. Cultural criticism in the tradition of The Atlantic
+      or London Review of Books. Sociological examinations of contemporary
+      life. Pattern recognition and historical context over breaking news
+      and daily political cycles.
+
+  spain:
+    name: "Spain"
+    description: |
+      Spanish domestic politics, society, and culture. Analysis of Spain's
+      political landscape, regional dynamics, social movements, economic
+      trends, and cultural developments. Institutional reform and societal
+      change in contemporary Spain. Longer-form analysis and novel
+      perspectives rather than routine news coverage. Content that maintains
+      connection to the country's evolving social and political reality.
+
+  china:
+    name: "China"
+    description: |
+      Chinese geopolitics, history, language, and culture. China's role in
+      global affairs, domestic political developments, and economic strategy.
+      Chinese history and civilizational analysis. Mandarin language learning
+      and cultural insights. Understanding China as both a contemporary
+      geopolitical power and a civilization with deep historical roots, from
+      trade policy to classical philosophy to modern Chinese society.
+
+  curiosities:
+    name: "Random Curiosities"
+    description: |
+      Intellectual rabbit holes spanning history, linguistics, mountaineering,
+      Formula 1, walking and its cognitive dimensions, personal knowledge
+      management, and tools for thought. Broad historical patterns and
+      civilizational analysis from ancient philosophy to medieval chronicles.
+      Structural linguistics and the relationship between meaning and
+      communication. The intersection of physical pursuits and intellectual
+      engagement. Curiosity-driven exploration across any domain where the
+      common thread is depth and genuine insight.

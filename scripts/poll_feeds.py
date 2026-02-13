@@ -35,7 +35,7 @@ def main() -> None:
             db,
             limit=limit,
             feed_limit=feed_limit,
-            skip_embed=args.skip_embed or args.dry_run,
+            skip_embed=args.skip_embed,
             workers=args.workers,
         )
         print(f"Ingested {len(ids)} new item(s)")
