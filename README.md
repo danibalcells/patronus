@@ -4,7 +4,7 @@ A personal research and reading assistant that aggregates content from RSS/Atom 
 
 The system monitors dozens of feeds spanning technical ML research, tech commentary, philosophy, linguistics, and more. It filters at volume so you don't have to — embedding-based ranking (not LLM-as-judge) selects ~7 high-signal items per day, and an LLM generates contextual summaries only after selection.
 
-The project is implemented in stages, each independently useful. See the [Linear project](https://linear.app/danibalcells/project/patronus-v2-f37a12c58fed) for current status.
+The project is implemented in stages, each independently useful.
 
 ## Stage 1 architecture
 
@@ -170,21 +170,6 @@ Restart=on-failure
 - **scripts/ + cron over APScheduler.** The scheduled jobs are independent and short-lived. Cron is transparent, debuggable, and doesn't require an extra dependency. The Telegram bot is the only long-running process.
 - **`interests.py` as the stage boundary.** This module is the seam between Stage 1 (static YAML descriptions) and Stage 2 (live Notion centroids). Everything downstream receives `dict[str, np.ndarray]` and doesn't care where it came from.
 - **Deliberately lossy.** The system does not try to ensure you see everything. It tries to ensure that what you see is worth your time.
-
-### Ticket mapping
-
-| Module | Primary ticket |
-|---|---|
-| `config.py`, `config/*.yaml` | DAN-10 (interests.yaml is DAN-8) |
-| `db.py` | DAN-6 ✅ |
-| `embed.py` | DAN-7 (created here, used by DAN-8) |
-| `ingest.py` | DAN-7 |
-| `interests.py` | DAN-8 |
-| `rank.py` | DAN-8 |
-| `summarize.py` | DAN-8 |
-| `digest.py` | DAN-8 |
-| `telegram.py` | DAN-9 |
-| `scripts/*` | DAN-10 |
 
 ## Development
 
