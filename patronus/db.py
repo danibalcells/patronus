@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+import numpy as np
+from sqlalchemy import LargeBinary
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def serialize_embedding(embedding: np.ndarray) -> bytes:
+    return embedding.astype(np.float32).tobytes()
+
+
+def deserialize_embedding(data: bytes) -> np.ndarray:
+    return np.frombuffer(data, dtype=np.float32)
+
+
+class Item(SQLModel, table=True):
+    __tablename__ = "items"
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    url: str = Field(unique=True, nullable=False, index=True)
+    title: Optional[str] = None
+    author: Optional[str] = None
+    source: Optional[str] = None
+    source_type: str = Field(nullable=False, index=True)
+    text: Optional[str] = None
+    embedding: Optional[bytes] = Field(default=None, sa_type=LargeBinary)
+    topic_cluster: Optional[str] = Field(default=None, index=True)
+    timestamp: Optional[str] = Field(default=None, index=True)
+    ingested_at: str = Field(default_factory=_now_utc)
+    read: bool = Field(default=False)
+    digest_history: str = Field(default="[]")
+
+
+class Feed(SQLModel, table=True):
+    __tablename__ = "feeds"
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    url: str = Field(unique=True, nullable=False, index=True)
+    name: Optional[str] = None
+    category: Optional[str] = None
+    last_polled: Optional[str] = None
+    etag: Optional[str] = None
+    last_modified: Optional[str] = None
+    active: bool = Field(default=True, index=True)
+
+
+class Database:
+    def __init__(self, db_path: str = "db.sqlite3") -> None:
+        self.db_path = db_path
+        self.engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+        )
+        SQLModel.metadata.create_all(self.engine)
+
+    def __enter__(self) -> Database:
+        return self
+
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.engine.dispose()
+
+    def _session(self) -> Session:
+        return Session(self.engine)
+
+    # ------------------------------------------------------------------
+    # Items
+    # ------------------------------------------------------------------
+
+    def add_item(
+        self,
+        url: str,
+        source_type: str,
+        title: Optional[str] = None,
+        author: Optional[str] = None,
+        source: Optional[str] = None,
+        text: Optional[str] = None,
+        embedding: Optional[np.ndarray] = None,
+        topic_cluster: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> str:
+        blob = serialize_embedding(embedding) if embedding is not None else None
+        item = Item(
+            url=url,
+            source_type=source_type,
+            title=title,
+            author=author,
+            source=source,
+            text=text,
+            embedding=blob,
+            topic_cluster=topic_cluster,
+            timestamp=timestamp,
+        )
+        with self._session() as session:
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            return item.id
+
+    def get_item(self, item_id: str) -> Optional[Item]:
+        with self._session() as session:
+            return session.get(Item, item_id)
+
+    def get_item_by_url(self, url: str) -> Optional[Item]:
+        with self._session() as session:
+            return session.exec(select(Item).where(Item.url == url)).first()
+
+    def get_unread_items(self) -> list[Item]:
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Item)
+                    .where(Item.read == False)
+                    .order_by(Item.timestamp.desc())
+                ).all()
+            )
+
+    def mark_read(self, item_id: str) -> None:
+        with self._session() as session:
+            item = session.get(Item, item_id)
+            if item is None:
+                return
+            item.read = True
+            session.add(item)
+            session.commit()
+
+    def store_embedding(self, item_id: str, embedding: np.ndarray) -> None:
+        with self._session() as session:
+            item = session.get(Item, item_id)
+            if item is None:
+                return
+            item.embedding = serialize_embedding(embedding)
+            session.add(item)
+            session.commit()
+
+    def get_embedding(self, item_id: str) -> Optional[np.ndarray]:
+        with self._session() as session:
+            item = session.get(Item, item_id)
+            if item is None or item.embedding is None:
+                return None
+            return deserialize_embedding(item.embedding)
+
+    def update_digest_history(self, item_id: str, date: str) -> None:
+        with self._session() as session:
+            item = session.get(Item, item_id)
+            if item is None:
+                return
+            history: list[str] = json.loads(item.digest_history or "[]")
+            history.append(date)
+            item.digest_history = json.dumps(history)
+            session.add(item)
+            session.commit()
+
+    # ------------------------------------------------------------------
+    # Feeds
+    # ------------------------------------------------------------------
+
+    def add_feed(
+        self,
+        url: str,
+        name: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> str:
+        feed = Feed(url=url, name=name, category=category)
+        with self._session() as session:
+            session.add(feed)
+            session.commit()
+            session.refresh(feed)
+            return feed.id
+
+    def get_feed(self, feed_id: str) -> Optional[Feed]:
+        with self._session() as session:
+            return session.get(Feed, feed_id)
+
+    def get_feed_by_url(self, url: str) -> Optional[Feed]:
+        with self._session() as session:
+            return session.exec(select(Feed).where(Feed.url == url)).first()
+
+    def get_active_feeds(self) -> list[Feed]:
+        with self._session() as session:
+            return list(
+                session.exec(
+                    select(Feed).where(Feed.active == True).order_by(Feed.name)
+                ).all()
+            )
+
+    def update_feed_poll(
+        self,
+        feed_id: str,
+        last_polled: Optional[str] = None,
+        etag: Optional[str] = None,
+        last_modified: Optional[str] = None,
+    ) -> None:
+        with self._session() as session:
+            feed = session.get(Feed, feed_id)
+            if feed is None:
+                return
+            feed.last_polled = last_polled or _now_utc()
+            feed.etag = etag
+            feed.last_modified = last_modified
+            session.add(feed)
+            session.commit()
+
+    def deactivate_feed(self, feed_id: str) -> None:
+        with self._session() as session:
+            feed = session.get(Feed, feed_id)
+            if feed is None:
+                return
+            feed.active = False
+            session.add(feed)
+            session.commit()
+
+    def seed_feeds_from_file(self, path: str) -> int:
+        count = 0
+        with open(path) as f:
+            for line in f:
+                url = line.strip()
+                if not url:
+                    continue
+                if self.get_feed_by_url(url) is not None:
+                    continue
+                self.add_feed(url=url)
+                count += 1
+        return count
