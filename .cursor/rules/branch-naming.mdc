@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Name branches as [issue-code]-[issue-title], without a user name prefix
