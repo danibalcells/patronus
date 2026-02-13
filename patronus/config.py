@@ -15,6 +15,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 class TopicConfig:
     name: str
     description: str
+    max_items: int = 1
 
 
 @dataclass
@@ -81,6 +82,7 @@ def load_config(
         topics[key] = TopicConfig(
             name=topic_data["name"],
             description=topic_data["description"].strip(),
+            max_items=topic_data.get("max_items", 1),
         )
 
     return Config(

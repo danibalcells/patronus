@@ -83,7 +83,7 @@ def select_digest(
     scored_items: list[ScoredItem],
     *,
     size: int = 7,
-    max_per_topic: int = 3,
+    max_per_topic: dict[str, int] | int = 3,
 ) -> list[ScoredItem]:
     selected: list[ScoredItem] = []
     topic_counts: dict[str, int] = {}
@@ -92,8 +92,13 @@ def select_digest(
         if len(selected) >= size:
             break
 
+        if isinstance(max_per_topic, dict):
+            limit = max_per_topic.get(item.matched_topic, 1)
+        else:
+            limit = max_per_topic
+
         count = topic_counts.get(item.matched_topic, 0)
-        if count >= max_per_topic:
+        if count >= limit:
             continue
 
         selected.append(item)

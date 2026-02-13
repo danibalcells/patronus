@@ -8,11 +8,11 @@ import logging
 
 from patronus.config import load_config
 from patronus.db import Database
-from patronus.digest import format_telegram, generate_digest
+from patronus.telegram import send_digest_message
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate and print the daily digest")
+    parser = argparse.ArgumentParser(description="Generate and send the daily digest via Telegram")
     parser.add_argument("--db", type=str, default="db.sqlite3", help="Path to SQLite database")
     parser.add_argument("--no-penalty", action="store_true", help="Ignore repeat penalty for already-digested items")
     args = parser.parse_args()
@@ -25,8 +25,7 @@ def main() -> None:
 
     config = load_config()
     with Database(db_path=args.db) as db:
-        digest = generate_digest(config, db, skip_penalty=args.no_penalty)
-        print(format_telegram(digest, config))
+        send_digest_message(config, db, skip_penalty=args.no_penalty)
 
 
 if __name__ == "__main__":

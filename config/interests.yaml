@@ -1,6 +1,7 @@
 topics:
   technical_ml:
     name: "Technical AI/ML"
+    max_items: 3
     description: |
       Technical machine learning research with emphasis on mechanistic
       interpretability, RL, AI safety and alignment, and latent space topologies.
@@ -13,6 +14,7 @@ topics:
 
   tech_strategy:
     name: "Tech & Strategy"
+    max_items: 3
     description: |
       The broader implications of technology and AI beyond the technical: AI
       safety and alignment research, existential risk analysis, governance

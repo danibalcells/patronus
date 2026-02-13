@@ -140,6 +140,18 @@ class Database:
         with self._session() as session:
             return session.exec(select(Item).where(Item.url == url)).first()
 
+    def get_item_count(self) -> int:
+        with self._session() as session:
+            return len(session.exec(select(Item.id)).all())
+
+    def get_unread_count(self) -> int:
+        with self._session() as session:
+            return len(session.exec(select(Item.id).where(Item.read == False)).all())
+
+    def get_feed_count(self) -> int:
+        with self._session() as session:
+            return len(session.exec(select(Feed.id).where(Feed.active == True)).all())
+
     def get_unread_items(self) -> list[Item]:
         with self._session() as session:
             return list(

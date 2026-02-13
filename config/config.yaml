@@ -14,4 +14,4 @@ summarization:
   model: "claude-haiku-4-5-20251001"
 
 telegram:
-  chat_id: ""
+  chat_id: "1646448265"

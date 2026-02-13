@@ -61,10 +61,11 @@ def generate_digest(config: Config, db: Database, *, skip_penalty: bool = False)
     scored = rank_unread(unread, interest_vectors)
     if not skip_penalty:
         scored = _apply_repeat_penalty(scored, config.digest.repeat_penalty)
+    per_topic_max = {key: tc.max_items for key, tc in config.topics.items()}
     selected = select_digest(
         scored,
         size=config.digest.size,
-        max_per_topic=config.digest.max_per_topic,
+        max_per_topic=per_topic_max,
     )
 
     digest_items: list[DigestItem] = []
@@ -112,6 +113,10 @@ def generate_digest(config: Config, db: Database, *, skip_penalty: bool = False)
     return digest
 
 
+def _clean_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", " ", text).strip()
+
+
 def _escape_markdown_v2(text: str) -> str:
     return re.sub(r"([_*\[\]()~`>#+\-=|{}.!\\])", r"\\\1", text)
 
@@ -120,36 +125,50 @@ def _escape_url(url: str) -> str:
     return url.replace("\\", "\\\\").replace(")", "\\)")
 
 
-def format_telegram(digest: Digest, config: Config) -> str:
+def _format_topic_section(topic_name: str, items: list[DigestItem]) -> str:
+    lines: list[str] = [f"\n*{_escape_markdown_v2(topic_name)}*"]
+    for di in items:
+        title = _clean_html(di.scored_item.item.title or "Untitled")
+        source = di.scored_item.item.source or ""
+        url = di.scored_item.item.url
+        summary = di.summary
+
+        line = f"[{_escape_markdown_v2(title)}]({_escape_url(url)})"
+        if source:
+            line += f" — _{_escape_markdown_v2(source)}_"
+        if summary:
+            line += f"\n{_escape_markdown_v2(summary)}"
+        lines.append(line)
+    return "\n\n".join(lines)
+
+
+def format_telegram_sections(digest: Digest, config: Config) -> list[str]:
     if not digest.items:
-        return "No items for today\\'s digest\\."
+        return ["No items for today\\'s digest\\."]
 
     groups: dict[str, list[DigestItem]] = {}
     for di in digest.items:
         topic = di.scored_item.matched_topic
         groups.setdefault(topic, []).append(di)
 
-    parts: list[str] = []
     date_str = digest.generated_at[:10] if digest.generated_at else ""
-    parts.append(f"*Daily Digest* — {_escape_markdown_v2(date_str)}")
+    header = f"*Daily Digest* — {_escape_markdown_v2(date_str)}"
+
+    sections: list[str] = [header]
+
+    for topic_key in config.topics:
+        if topic_key not in groups:
+            continue
+        topic_name = config.topics[topic_key].name
+        sections.append(_format_topic_section(topic_name, groups[topic_key]))
 
     for topic_key, items in groups.items():
-        topic_config = config.topics.get(topic_key)
-        topic_name = topic_config.name if topic_config else topic_key
-        parts.append(f"\n*{_escape_markdown_v2(topic_name)}*")
+        if topic_key in config.topics:
+            continue
+        sections.append(_format_topic_section(topic_key, items))
 
-        for di in items:
-            title = di.scored_item.item.title or "Untitled"
-            source = di.scored_item.item.source or ""
-            url = di.scored_item.item.url
-            summary = di.summary
+    return sections
 
-            line = f"[{_escape_markdown_v2(title)}]({_escape_url(url)})"
-            if source:
-                line += f" — _{_escape_markdown_v2(source)}_"
-            if summary:
-                line += f"\n{_escape_markdown_v2(summary)}"
 
-            parts.append(line)
-
-    return "\n\n".join(parts)
+def format_telegram(digest: Digest, config: Config) -> str:
+    return "\n\n".join(format_telegram_sections(digest, config))
