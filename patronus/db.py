@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
-from sqlalchemy import LargeBinary
+from sqlalchemy import LargeBinary, event
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
@@ -40,6 +40,8 @@ class Item(SQLModel, table=True):
     topic_cluster: Optional[str] = Field(default=None, index=True)
     timestamp: Optional[str] = Field(default=None, index=True)
     ingested_at: str = Field(default_factory=_now_utc)
+    item_type: str = Field(default="article", index=True)
+    source_item_id: Optional[str] = Field(default=None, foreign_key="items.id", index=True)
     read: bool = Field(default=False)
     digest_history: str = Field(default="[]")
 
@@ -84,6 +86,13 @@ class Database:
             f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False},
         )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_conn: object, connection_record: object) -> None:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
         SQLModel.metadata.create_all(self.engine)
 
     def __enter__(self) -> Database:
@@ -113,6 +122,8 @@ class Database:
         embedding: Optional[np.ndarray] = None,
         topic_cluster: Optional[str] = None,
         timestamp: Optional[str] = None,
+        item_type: str = "article",
+        source_item_id: Optional[str] = None,
     ) -> str:
         blob = serialize_embedding(embedding) if embedding is not None else None
         item = Item(
@@ -125,6 +136,8 @@ class Database:
             embedding=blob,
             topic_cluster=topic_cluster,
             timestamp=timestamp,
+            item_type=item_type,
+            source_item_id=source_item_id,
         )
         with self._session() as session:
             session.add(item)
@@ -288,6 +301,7 @@ class Database:
         )
         with self._session() as session:
             session.add(digest)
+            session.flush()
             for entry in items:
                 record = DigestItemRecord(
                     digest_id=digest.id,

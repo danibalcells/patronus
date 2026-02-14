@@ -145,6 +145,52 @@ class TestItems:
     def test_digest_history_nonexistent_item(self, db: Database) -> None:
         db.update_digest_history("nonexistent", "2026-02-10")
 
+    def test_item_type_defaults_to_article(self, db: Database) -> None:
+        item_id = db.add_item(url="https://example.com/post", source_type="rss")
+        item = db.get_item(item_id)
+        assert item is not None
+        assert item.item_type == "article"
+
+    def test_item_type_stored(self, db: Database) -> None:
+        item_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+        item = db.get_item(item_id)
+        assert item is not None
+        assert item.item_type == "tweet"
+
+    def test_source_item_id_defaults_to_none(self, db: Database) -> None:
+        item_id = db.add_item(url="https://example.com/post", source_type="rss")
+        item = db.get_item(item_id)
+        assert item is not None
+        assert item.source_item_id is None
+
+    def test_source_item_id_stored(self, db: Database) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+        child_id = db.add_item(
+            url="https://arxiv.org/abs/2026.12345",
+            source_type="rss",
+            item_type="paper",
+            source_item_id=parent_id,
+        )
+        child = db.get_item(child_id)
+        assert child is not None
+        assert child.source_item_id == parent_id
+
+    def test_source_item_id_fk_enforced(self, db: Database) -> None:
+        with pytest.raises(IntegrityError):
+            db.add_item(
+                url="https://example.com/orphan",
+                source_type="rss",
+                source_item_id="nonexistent-id",
+            )
+
 
 class TestFeeds:
     def test_add_and_get(self, db: Database) -> None:

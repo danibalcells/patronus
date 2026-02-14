@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from html import unescape
+from html.parser import HTMLParser
 from time import mktime
 from typing import Optional
+from urllib.parse import urlparse
 
 import feedparser
 import trafilatura
@@ -16,6 +20,53 @@ logger = logging.getLogger(__name__)
 
 MAX_TEXT_CHARS = 25_000
 DEFAULT_WORKERS = 8
+
+ITEM_TYPE_PATTERNS: dict[str, list[str]] = {
+    "tweet": ["x.com", "twitter.com"],
+    "paper": ["arxiv.org", "openreview.net"],
+}
+
+
+class _TweetHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: list[str] = []
+        self._links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "br":
+            self._parts.append("\n")
+        elif tag == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self._links.append(href)
+
+    def handle_data(self, data: str) -> None:
+        self._parts.append(data)
+
+    @property
+    def text(self) -> str:
+        raw = "".join(self._parts)
+        return re.sub(r"\n{3,}", "\n\n", unescape(raw)).strip()
+
+    @property
+    def links(self) -> list[str]:
+        return list(self._links)
+
+
+def _parse_tweet_html(html: str) -> tuple[str, list[str]]:
+    parser = _TweetHTMLParser()
+    parser.feed(html)
+    return parser.text, parser.links
+
+
+def classify_item_type(url: str) -> str:
+    hostname = urlparse(url).hostname or ""
+    hostname = hostname.removeprefix("www.")
+    for item_type, domains in ITEM_TYPE_PATTERNS.items():
+        if hostname in domains:
+            return item_type
+    return "article"
 
 
 def _entry_author(entry: object) -> Optional[str]:
@@ -63,6 +114,14 @@ def _extract_full_text(url: str) -> Optional[str]:
     except Exception:
         logger.debug("trafilatura extraction failed for %s", url, exc_info=True)
     return None
+
+
+def _extract_tweet_content(entry_data: dict) -> Optional[str]:
+    summary = entry_data.get("summary")
+    if not summary:
+        return None
+    text, _links = _parse_tweet_html(summary)
+    return text[:MAX_TEXT_CHARS] if text else None
 
 
 def _display_author(
@@ -159,20 +218,33 @@ def poll_feeds(
             feed_skipped,
         )
 
-    urls_to_fetch = [e["url"] for e in raw_entries]
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        full_texts = list(pool.map(_extract_full_text, urls_to_fetch))
+    item_types = [classify_item_type(e["url"]) for e in raw_entries]
+
+    non_tweet_indices = [i for i, t in enumerate(item_types) if t != "tweet"]
+    fetched_texts: dict[int, Optional[str]] = {}
+    if non_tweet_indices:
+        urls_to_fetch = [raw_entries[i]["url"] for i in non_tweet_indices]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_extract_full_text, urls_to_fetch))
+        for idx, full_text in zip(non_tweet_indices, results):
+            fetched_texts[idx] = full_text
 
     pending: list[dict] = []
-    for entry_data, full_text in zip(raw_entries, full_texts):
-        text = full_text
-        if not text and entry_data["summary"]:
-            text = entry_data["summary"][:MAX_TEXT_CHARS]
+    for i, entry_data in enumerate(raw_entries):
+        item_type = item_types[i]
+
+        if item_type == "tweet":
+            text = _extract_tweet_content(entry_data)
+        else:
+            text = fetched_texts.get(i)
+            if not text and entry_data["summary"]:
+                text = entry_data["summary"][:MAX_TEXT_CHARS]
 
         pending.append(
             {
                 "url": entry_data["url"],
                 "source_type": "rss",
+                "item_type": item_type,
                 "title": entry_data["title"],
                 "author": _display_author(
                     entry_data["author"], entry_data["feed_title"]
@@ -214,6 +286,7 @@ def poll_feeds(
             item_id = db.add_item(
                 url=item_data["url"],
                 source_type=item_data["source_type"],
+                item_type=item_data["item_type"],
                 title=item_data["title"],
                 author=item_data["author"],
                 source=item_data["source"],
@@ -265,6 +338,7 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
         item_id = db.add_item(
             url=url,
             source_type="manual",
+            item_type=classify_item_type(url),
             title=title,
             author=author,
             text=text,
