@@ -1,5 +1,7 @@
 ---
+description: 
 alwaysApply: true
 ---
 
 Before working on any request, read README.md to understand the project architecture, module responsibilities, and dependency graph. Use this to determine which modules are affected by the task and how they relate to each other.
+If you make changes to the architecture during the course of a task, keep it in mind and once the task is finished or close to being finished, explain to the user that you will change the README to ensure it's up to date.
