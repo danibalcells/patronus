@@ -79,6 +79,15 @@ class DigestItemRecord(SQLModel, table=True):
     matched_topic: Optional[str] = None
 
 
+class ContextSnapshot(SQLModel, table=True):
+    __tablename__ = "context_snapshots"
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    source_type: str = Field(index=True)
+    content: str = Field(default="")
+    generated_at: str = Field(default_factory=_now_utc)
+
+
 class Database:
     def __init__(self, db_path: str = "db.sqlite3") -> None:
         self.db_path = db_path
@@ -332,3 +341,24 @@ class Database:
                     .where(DigestItemRecord.digest_id == digest_id)
                 ).all()
             )
+
+    # ------------------------------------------------------------------
+    # Context Snapshots
+    # ------------------------------------------------------------------
+
+    def save_context_snapshot(self, source_type: str, content: str) -> str:
+        snapshot = ContextSnapshot(source_type=source_type, content=content)
+        with self._session() as session:
+            session.add(snapshot)
+            session.commit()
+            session.refresh(snapshot)
+            return snapshot.id
+
+    def get_latest_context_snapshot(self, source_type: str) -> Optional[ContextSnapshot]:
+        with self._session() as session:
+            return session.exec(
+                select(ContextSnapshot)
+                .where(ContextSnapshot.source_type == source_type)
+                .order_by(ContextSnapshot.generated_at.desc())
+                .limit(1)
+            ).first()

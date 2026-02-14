@@ -4,8 +4,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
-import logging
 
+from patronus import setup_logging
 from patronus.db import Database
 from patronus.ingest import poll_feeds
 
@@ -20,8 +20,7 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=8, help="Parallel workers for feed fetching / text extraction")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    logging.getLogger("urllib3").setLevel(logging.ERROR)
+    setup_logging()
 
     limit = args.limit
     feed_limit = args.feed_limit

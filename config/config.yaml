@@ -15,3 +15,18 @@ summarization:
 
 telegram:
   chat_id: "1646448265"
+
+notion:
+  database_ids:
+    journal: "66a8cd52520543df9895c373627f821d"
+    work_diary: "e564563b7e8c4e529181aef52419b14a"
+    notes: "fea23cce95f04553aeb15daf486e1c95"
+    library: "885dcbfb0e5f48b481282d09ca3241e3"
+    reviews: "29a609f4e9ac80389278ddb52f06cd06"
+    big_questions: "c2f6512ba3314226a0c6f5f81eada7c2"
+  lookback_days: 21
+  fallback_lookback_days: 45
+  min_entries_threshold: 3
+  max_chars_per_entry: 10000
+  summary_model: "google/gemini-2.5-flash-lite"
+  # summary_model: "google/gemini-3-flash-preview"

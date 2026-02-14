@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +48,16 @@ class TelegramConfig:
 
 
 @dataclass
+class NotionConfig:
+    database_ids: dict[str, str] = field(default_factory=dict)
+    lookback_days: int = 14
+    fallback_lookback_days: int = 30
+    min_entries_threshold: int = 3
+    max_chars_per_entry: int = 3000
+    summary_model: str = "google/gemini-2.5-flash-lite"
+
+
+@dataclass
 class Config:
     digest: DigestConfig
     polling: PollingConfig
@@ -55,9 +65,12 @@ class Config:
     summarization: SummarizationConfig
     telegram: TelegramConfig
     topics: dict[str, TopicConfig]
+    notion: NotionConfig | None = None
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     telegram_bot_token: str = ""
+    notion_token: str = ""
+    google_api_key: str = ""
 
 
 def load_config(
@@ -85,6 +98,9 @@ def load_config(
             max_items=topic_data.get("max_items", 1),
         )
 
+    notion_raw = raw.get("notion")
+    notion_cfg = NotionConfig(**notion_raw) if notion_raw else None
+
     return Config(
         digest=DigestConfig(**raw.get("digest", {})),
         polling=PollingConfig(**raw.get("polling", {})),
@@ -92,7 +108,10 @@ def load_config(
         summarization=SummarizationConfig(**raw.get("summarization", {})),
         telegram=TelegramConfig(**raw.get("telegram", {})),
         topics=topics,
+        notion=notion_cfg,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        notion_token=os.getenv("NOTION_TOKEN", ""),
+        google_api_key=os.getenv("GOOGLE_API_KEY", ""),
     )

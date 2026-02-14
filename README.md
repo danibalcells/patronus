@@ -209,7 +209,8 @@ scripts/
 ├── poll_feeds.py           # Unchanged
 ├── send_digest.py          # Uses pipeline.DigestPipeline
 ├── seed_feeds.py           # Unchanged
-└── run_bot.py              # Runs bot.py
+├── run_bot.py              # Runs bot.py
+└── test_notion.py          # Manual test: fetch Notion context and print
 
 config/
 ├── config.yaml             # Extended with models, notion, output sections
@@ -220,16 +221,16 @@ config/
 
 | Module | Status | What changed |
 |--------|--------|--------------|
-| `config.py` | Changed | Per-task model config (`models` section), Notion settings, output settings |
-| `db.py` | Changed | New query methods that back the agent's retrieval tools |
-| `llm.py` | **New** | Provider-agnostic LLM client — routes `"provider/model"` strings to the right SDK |
+| `config.py` | ✅ Changed | `NotionConfig` dataclass, `notion_token`/`google_api_key` env vars |
+| `db.py` | ✅ Changed | `ContextSnapshot` table for caching personalization context |
+| `llm.py` | ✅ **New** | Provider-agnostic LLM client — routes `"provider/model"` strings to Anthropic, Google (Gemini), or OpenAI |
 | `embed.py` | Changed | Provider routing via `llm.py` (same `embed_text`/`embed_batch` interface) |
 | `ingest.py` | Unchanged | RSS/Atom polling, content extraction, manual URL add |
 | `rank.py` | Unchanged | Cosine similarity + selection (used by `tools/local.py` as backend) |
 | `summarize.py` | Unchanged | Per-item summaries (used by Stage 1 fallback path) |
-| `context.py` | **New** | `PersonalizationSource` protocol, `Context` dataclass, source merging |
-| `interests.py` | Changed | Implements `PersonalizationSource` (wraps existing YAML→embed logic) |
-| `notion.py` | **New** | Implements `PersonalizationSource` — pulls recent Notion content, builds context |
+| `context.py` | ✅ **New** | `PersonalizationSource` protocol, `Context` dataclass, `merge_sources()` |
+| `interests.py` | ✅ Changed | `InterestsSource` class implements `PersonalizationSource`; `load_interest_vectors()` preserved |
+| `notion.py` | ✅ **New** | `NotionSource` implements `PersonalizationSource` — pulls from 5 Notion DBs, extracts text blocks (including synced blocks), summarizes via LLM, caches to DB |
 | `agent.py` | **New** | LLM editor agent: receives context, calls tools, returns structured `Digest` |
 | `digest.py` | Changed | `Digest` gains typed sections; `generate_digest` dispatches to agent or Stage 1 path |
 | `pipeline.py` | **New** | `DigestPipeline` orchestrator — wires sources, tools, agent, and outputs |
@@ -276,13 +277,13 @@ class Tool(ABC):
 
 ### Module responsibilities (new and changed modules)
 
-**`llm.py`** — Provider-agnostic LLM client. Exposes `complete(model, messages, tools?)` where `model` is a `"provider/model-name"` string (e.g. `"anthropic/claude-sonnet-4-20250514"`, `"openai/gpt-4o-mini"`). Parses the provider prefix and routes to the right SDK. Callers pass their task's configured model string and don't know or care which provider backs it. Adding a new provider means adding a branch here, not touching callers.
+**`llm.py`** ✅ — Provider-agnostic LLM client. Exposes `complete(model, *, system, user_message, max_tokens)` where `model` is a `"provider/model-name"` string (e.g. `"google/gemini-2.5-flash-lite"`, `"anthropic/claude-haiku-4-5-20251001"`, `"openai/gpt-4o-mini"`). Parses the provider prefix and routes to the right SDK. Uses lazy singleton clients per provider. Callers pass their task's configured model string and don't know or care which provider backs it.
 
-**`context.py`** — Defines the `PersonalizationSource` protocol and a `Context` dataclass (prose summary + optional interest vectors). `merge_sources(sources)` concatenates context strings and merges vector dicts from all available sources.
+**`context.py`** ✅ — Defines the `PersonalizationSource` protocol (`get_context()`, `get_interest_vectors()`) and a `Context` dataclass (prose summary + optional interest vectors). `merge_sources(sources, config)` concatenates context strings and merges vector dicts from all available sources, gracefully skipping any source that throws.
 
-**`interests.py`** (changed) — Implements `PersonalizationSource`. Wraps the existing YAML → embed logic. `get_context()` returns topic descriptions as prose. `get_interest_vectors()` returns the embedded vectors. Functionally identical to Stage 1, just conforming to the protocol.
+**`interests.py`** ✅ (changed) — `InterestsSource` class implements `PersonalizationSource`. `get_context()` returns topic descriptions as prose. `get_interest_vectors()` returns the embedded vectors via the existing `load_interest_vectors()` function, which is preserved for backward compatibility.
 
-**`notion.py`** — Implements `PersonalizationSource`. Connects to the Notion API, pulls recent journal entries, work diary, notes, and Readwise highlights (synced via Notion). `get_context()` builds a prose summary of recent intellectual activity for the agent. `get_interest_vectors()` returns `None` (or optionally embeds excerpts for retrieval).
+**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. Queries 5 Notion databases (Journal, Work Diary, Notes, Library highlights, Reviews) filtered by `last_edited_time`. Extracts text from all block types (paragraphs, headings, lists, toggles, checkboxes, quotes, callouts, code, equations, bookmarks, table rows) including synced blocks (transparently resolves both original and reference synced blocks). Sends all extracted content in a single LLM call (via `llm.complete()`) with a summarization prompt targeting ~5k tokens of output. Fallback logic: if fewer than `min_entries_threshold` entries found in the configured lookback window, expands to `fallback_lookback_days`; if still below threshold, returns empty string. Optionally caches generated summaries to a `ContextSnapshot` table via the DB.
 
 **`agent.py`** — The LLM editor agent. `plan_and_assemble(config, context, tool_registry)` runs the agent loop: sends the personalization context as a system prompt, lets the agent call retrieval tools via the LLM tool use API, and collects the structured output — a `Digest` with typed sections. The agent decides which sections to include, how many items each gets, and writes summaries as part of assembly.
 
@@ -420,6 +421,7 @@ outputs:
 ```
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_API_KEY=...
 TELEGRAM_BOT_TOKEN=...
 NOTION_TOKEN=secret_...
 ```
