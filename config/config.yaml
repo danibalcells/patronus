@@ -29,4 +29,5 @@ notion:
   min_entries_threshold: 3
   max_chars_per_entry: 10000
   summary_model: "google/gemini-2.5-flash-lite"
+  summary_model: "anthropic/claude-sonnet-4-5-20250929"
   # summary_model: "google/gemini-3-flash-preview"
