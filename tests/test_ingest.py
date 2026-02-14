@@ -14,10 +14,15 @@ from patronus.ingest import (
     _display_author,
     _entry_author,
     _extract_full_text,
+    _extract_links_from_html,
     _extract_tweet_content,
+    _filter_allowed_links,
+    _is_allowed_link,
+    _normalize_url,
     _parse_timestamp,
     _parse_tweet_html,
     classify_item_type,
+    ingest_linked_items,
     ingest_url,
     poll_feeds,
 )
@@ -985,20 +990,28 @@ class TestParseTweetHtml:
 class TestExtractTweetContent:
     def test_extracts_from_summary(self) -> None:
         entry_data = {"summary": RSSAPP_TWEET_HTML}
-        text = _extract_tweet_content(entry_data)
+        text, links = _extract_tweet_content(entry_data)
         assert text is not None
         assert "Seinfeld about quantum mechanics" in text
         assert "<blockquote>" not in text
+        assert len(links) == 1
 
     def test_returns_none_without_summary(self) -> None:
-        assert _extract_tweet_content({"summary": None}) is None
-        assert _extract_tweet_content({}) is None
+        text, links = _extract_tweet_content({"summary": None})
+        assert text is None
+        assert links == []
+        text, links = _extract_tweet_content({})
+        assert text is None
+        assert links == []
 
     def test_returns_none_for_empty_summary(self) -> None:
-        assert _extract_tweet_content({"summary": ""}) is None
+        text, links = _extract_tweet_content({"summary": ""})
+        assert text is None
+        assert links == []
 
 
 class TestTweetExtractionInPollFeeds:
+    @patch("patronus.ingest.ingest_linked_items", return_value=[])
     @patch("patronus.ingest.embed_batch")
     @patch("patronus.ingest._extract_full_text")
     @patch("patronus.ingest.feedparser")
@@ -1007,6 +1020,7 @@ class TestTweetExtractionInPollFeeds:
         mock_fp: MagicMock,
         mock_extract: MagicMock,
         mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
         db: Database,
     ) -> None:
         db.add_feed(url="https://rss.app/feeds/twitter.xml", name="Twitter AI")
@@ -1035,6 +1049,7 @@ class TestTweetExtractionInPollFeeds:
         assert "Seinfeld about quantum mechanics" in (item.text or "")
         assert "JavaScript" not in (item.text or "")
 
+    @patch("patronus.ingest.ingest_linked_items", return_value=[])
     @patch("patronus.ingest.embed_batch")
     @patch("patronus.ingest._extract_full_text")
     @patch("patronus.ingest.feedparser")
@@ -1043,6 +1058,7 @@ class TestTweetExtractionInPollFeeds:
         mock_fp: MagicMock,
         mock_extract: MagicMock,
         mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
         db: Database,
     ) -> None:
         db.add_feed(url="https://rss.app/feeds/twitter.xml", name="Twitter AI")
@@ -1091,3 +1107,490 @@ class TestTweetExtractionInPollFeeds:
         assert article_item.text == "Full article text from trafilatura"
 
         mock_extract.assert_called_once_with("https://blog.example.com/post")
+
+
+class TestExtractLinksFromHtml:
+    def test_extracts_href_links(self) -> None:
+        html = '<a href="https://arxiv.org/abs/1234">paper</a> and <a href="https://example.com">site</a>'
+        links = _extract_links_from_html(html)
+        assert links == ["https://arxiv.org/abs/1234", "https://example.com"]
+
+    def test_ignores_non_http_links(self) -> None:
+        html = '<a href="mailto:x@y.com">email</a> <a href="/relative">rel</a>'
+        links = _extract_links_from_html(html)
+        assert links == []
+
+    def test_empty_html(self) -> None:
+        assert _extract_links_from_html("") == []
+
+    def test_no_links(self) -> None:
+        assert _extract_links_from_html("<p>No links here</p>") == []
+
+    def test_handles_malformed_html(self) -> None:
+        html = '<a href="https://example.com">unclosed'
+        links = _extract_links_from_html(html)
+        assert links == ["https://example.com"]
+
+
+class TestNormalizeUrl:
+    def test_arxiv_pdf_to_abs(self) -> None:
+        assert _normalize_url("https://arxiv.org/pdf/2301.12345") == "https://arxiv.org/abs/2301.12345"
+
+    def test_arxiv_abs_unchanged(self) -> None:
+        assert _normalize_url("https://arxiv.org/abs/2301.12345") == "https://arxiv.org/abs/2301.12345"
+
+    def test_non_arxiv_unchanged(self) -> None:
+        assert _normalize_url("https://example.com/pdf/doc") == "https://example.com/pdf/doc"
+
+    def test_arxiv_other_paths_unchanged(self) -> None:
+        assert _normalize_url("https://arxiv.org/html/2301.12345") == "https://arxiv.org/html/2301.12345"
+
+
+class TestIsAllowedLink:
+    def test_arxiv_allowed(self) -> None:
+        assert _is_allowed_link("https://arxiv.org/abs/2301.12345") is True
+
+    def test_openreview_allowed(self) -> None:
+        assert _is_allowed_link("https://openreview.net/forum?id=abc") is True
+
+    def test_anthropic_allowed(self) -> None:
+        assert _is_allowed_link("https://www.anthropic.com/research/paper") is True
+
+    def test_deepmind_allowed(self) -> None:
+        assert _is_allowed_link("https://deepmind.google/blog/post") is True
+
+    def test_openai_allowed(self) -> None:
+        assert _is_allowed_link("https://openai.com/research/index") is True
+
+    def test_substack_allowed(self) -> None:
+        assert _is_allowed_link("https://thezvi.substack.com/p/post") is True
+        assert _is_allowed_link("https://aisupremacy.substack.com/p/title") is True
+
+    def test_twitter_not_allowed(self) -> None:
+        assert _is_allowed_link("https://x.com/user/status/123") is False
+        assert _is_allowed_link("https://twitter.com/user/status/123") is False
+
+    def test_youtube_not_allowed(self) -> None:
+        assert _is_allowed_link("https://youtube.com/watch?v=abc") is False
+
+    def test_image_hosts_not_allowed(self) -> None:
+        assert _is_allowed_link("https://pbs.twimg.com/media/abc.jpg") is False
+        assert _is_allowed_link("https://imgur.com/abc") is False
+
+    def test_random_domain_not_allowed(self) -> None:
+        assert _is_allowed_link("https://example.com/post") is False
+
+    def test_bare_substack_not_allowed(self) -> None:
+        assert _is_allowed_link("https://substack.com") is False
+
+
+class TestFilterAllowedLinks:
+    def test_filters_to_allowed_only(self) -> None:
+        urls = [
+            "https://arxiv.org/abs/1234",
+            "https://x.com/user/status/123",
+            "https://thezvi.substack.com/p/post",
+            "https://youtube.com/watch?v=abc",
+        ]
+        result = _filter_allowed_links(urls)
+        assert result == [
+            "https://arxiv.org/abs/1234",
+            "https://thezvi.substack.com/p/post",
+        ]
+
+    def test_deduplicates(self) -> None:
+        urls = [
+            "https://arxiv.org/abs/1234",
+            "https://arxiv.org/abs/1234",
+        ]
+        result = _filter_allowed_links(urls)
+        assert result == ["https://arxiv.org/abs/1234"]
+
+    def test_normalizes_arxiv_pdf(self) -> None:
+        urls = [
+            "https://arxiv.org/pdf/1234",
+            "https://arxiv.org/abs/1234",
+        ]
+        result = _filter_allowed_links(urls)
+        assert len(result) == 1
+        assert result[0] == "https://arxiv.org/abs/1234"
+
+    def test_empty_list(self) -> None:
+        assert _filter_allowed_links([]) == []
+
+
+class TestIngestLinkedItems:
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_ingests_linked_url(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+
+        mock_extract.return_value = "Paper abstract text"
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ids = ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
+
+        assert len(ids) == 1
+        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        assert item is not None
+        assert item.source_type == "link_extraction"
+        assert item.item_type == "paper"
+        assert item.source_item_id == parent_id
+        assert item.text == "Paper abstract text"
+        assert item.embedding is not None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_skips_existing_url(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+        db.add_item(
+            url="https://arxiv.org/abs/2301.12345",
+            source_type="rss",
+            item_type="paper",
+        )
+
+        ids = ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
+
+        assert len(ids) == 0
+        mock_extract.assert_not_called()
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_handles_extraction_failure(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+
+        mock_extract.return_value = None
+
+        ids = ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
+
+        assert len(ids) == 1
+        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        assert item is not None
+        assert item.text is None
+        assert item.embedding is None
+        assert item.source_item_id == parent_id
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_skip_embed_flag(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+
+        mock_extract.return_value = "Paper text"
+
+        ids = ingest_linked_items(
+            db, parent_id, ["https://arxiv.org/abs/2301.12345"], skip_embed=True
+        )
+
+        assert len(ids) == 1
+        mock_embed.assert_not_called()
+        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        assert item is not None
+        assert item.text == "Paper text"
+        assert item.embedding is None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_continues_on_individual_failure(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123",
+            source_type="rss",
+            item_type="tweet",
+        )
+
+        mock_extract.side_effect = [Exception("network error"), "Paper text"]
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ids = ingest_linked_items(
+            db,
+            parent_id,
+            [
+                "https://arxiv.org/abs/1111.11111",
+                "https://arxiv.org/abs/2222.22222",
+            ],
+        )
+
+        assert len(ids) == 1
+        assert db.get_item_by_url("https://arxiv.org/abs/1111.11111") is None
+        assert db.get_item_by_url("https://arxiv.org/abs/2222.22222") is not None
+
+
+class TestLinkExtractionInPollFeeds:
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_tweet_with_arxiv_link_triggers_extraction(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://rss.app/feeds/twitter.xml", name="Twitter AI")
+
+        tweet_html = (
+            'Check out this paper '
+            '<a href="https://arxiv.org/abs/2301.12345">https://arxiv.org/abs/2301.12345</a>'
+        )
+        tweet_entry = _make_entry(
+            link="https://x.com/user/status/123",
+            title="A tweet",
+            summary=tweet_html,
+        )
+
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[tweet_entry], feed_title="Twitter AI"
+        )
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+        mock_ingest_linked.return_value = []
+
+        poll_feeds(db)
+
+        mock_ingest_linked.assert_called_once()
+        call_args = mock_ingest_linked.call_args
+        assert call_args[0][2] == ["https://arxiv.org/abs/2301.12345"]
+
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_no_links_does_not_trigger_extraction(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://feed.example.com/rss", name="Blog")
+
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[_make_entry(link="https://example.com/post", summary="no links")]
+        )
+        mock_extract.return_value = "Text"
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+
+        poll_feeds(db)
+
+        mock_ingest_linked.assert_not_called()
+
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_non_allowed_links_filtered_out(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://rss.app/feeds/twitter.xml", name="Twitter AI")
+
+        tweet_html = (
+            'Look at this <a href="https://youtube.com/watch?v=abc">video</a> '
+            'and <a href="https://x.com/other/status/456">tweet</a>'
+        )
+        tweet_entry = _make_entry(
+            link="https://x.com/user/status/123",
+            title="A tweet",
+            summary=tweet_html,
+        )
+
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[tweet_entry], feed_title="Twitter AI"
+        )
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+
+        poll_feeds(db)
+
+        mock_ingest_linked.assert_not_called()
+
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_article_summary_links_extracted(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://feed.example.com/rss", name="Blog")
+
+        summary_html = (
+            'Great post referencing <a href="https://arxiv.org/abs/9999.99999">this paper</a>'
+        )
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[_make_entry(link="https://example.com/post", summary=summary_html)]
+        )
+        mock_extract.return_value = "Full text"
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+        mock_ingest_linked.return_value = []
+
+        poll_feeds(db)
+
+        mock_ingest_linked.assert_called_once()
+        call_args = mock_ingest_linked.call_args
+        assert call_args[0][2] == ["https://arxiv.org/abs/9999.99999"]
+
+
+class TestLinkExtractionInIngestUrl:
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_extracts_links_from_downloaded_html(
+        self,
+        mock_traf: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        html_with_link = (
+            '<html><body>'
+            '<a href="https://arxiv.org/abs/2301.12345">paper</a>'
+            '</body></html>'
+        )
+        mock_traf.fetch_url.return_value = html_with_link
+        mock_traf.bare_extraction.return_value = {
+            "text": "Article mentioning a paper",
+            "title": "Blog Post",
+            "author": "Author",
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+        mock_ingest_linked.return_value = ["linked-id"]
+
+        item_id = ingest_url(db, "https://example.com/blog-post")
+
+        assert item_id is not None
+        mock_ingest_linked.assert_called_once()
+        call_args = mock_ingest_linked.call_args
+        assert call_args[0][0] == db
+        assert call_args[0][1] == item_id
+        assert call_args[0][2] == ["https://arxiv.org/abs/2301.12345"]
+
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_no_links_does_not_trigger_extraction(
+        self,
+        mock_traf: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        mock_traf.fetch_url.return_value = "<html><body>plain</body></html>"
+        mock_traf.bare_extraction.return_value = {
+            "text": "Plain article",
+            "title": "Title",
+            "author": None,
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_url(db, "https://example.com/article")
+
+        mock_ingest_linked.assert_not_called()
+
+    @patch("patronus.ingest.ingest_linked_items")
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_no_extraction_when_download_fails(
+        self,
+        mock_traf: MagicMock,
+        mock_embed: MagicMock,
+        mock_ingest_linked: MagicMock,
+        db: Database,
+    ) -> None:
+        mock_traf.fetch_url.return_value = None
+        mock_traf.bare_extraction.return_value = None
+
+        ingest_url(db, "https://example.com/article")
+
+        mock_ingest_linked.assert_not_called()
+
+
+class TestEndToEndLinkExtraction:
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_tweet_with_paper_and_tweet_links(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed_batch: MagicMock,
+        mock_embed_text: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://rss.app/feeds/twitter.xml", name="Twitter AI")
+
+        tweet_html = (
+            "Interesting thread by @researcher on scaling laws "
+            '<a href="https://x.com/researcher/status/999">https://x.com/researcher/status/999</a> '
+            "and the paper backing it up "
+            '<a href="https://arxiv.org/abs/2602.01234">https://arxiv.org/abs/2602.01234</a>'
+        )
+        tweet_entry = _make_entry(
+            link="https://x.com/user/status/123",
+            title="@user: Interesting thread...",
+            author="@user",
+            summary=tweet_html,
+        )
+
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[tweet_entry], feed_title="Twitter AI"
+        )
+        embedding = np.ones(1536, dtype=np.float32)
+        mock_embed_batch.return_value = [embedding]
+        mock_extract.return_value = "Abstract: We study scaling laws..."
+        mock_embed_text.return_value = embedding
+
+        ids = poll_feeds(db)
+
+        assert len(ids) == 2
+
+        tweet = db.get_item_by_url("https://x.com/user/status/123")
+        assert tweet is not None
+        assert tweet.item_type == "tweet"
+        assert tweet.source_item_id is None
+        assert tweet.source_type == "rss"
+
+        paper = db.get_item_by_url("https://arxiv.org/abs/2602.01234")
+        assert paper is not None
+        assert paper.item_type == "paper"
+        assert paper.source_item_id == tweet.id
+        assert paper.source_type == "link_extraction"
+        assert paper.text == "Abstract: We study scaling laws..."
+        assert paper.embedding is not None
+
+        assert db.get_item_by_url("https://x.com/researcher/status/999") is None

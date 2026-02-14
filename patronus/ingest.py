@@ -26,6 +26,18 @@ ITEM_TYPE_PATTERNS: dict[str, list[str]] = {
     "paper": ["arxiv.org", "openreview.net"],
 }
 
+LINK_EXTRACT_DOMAINS: set[str] = {
+    "arxiv.org",
+    "openreview.net",
+    "anthropic.com",
+    "deepmind.google",
+    "openai.com",
+}
+
+LINK_EXTRACT_DOMAIN_SUFFIXES: list[str] = [
+    ".substack.com",
+]
+
 
 class _TweetHTMLParser(HTMLParser):
     def __init__(self) -> None:
@@ -58,6 +70,59 @@ def _parse_tweet_html(html: str) -> tuple[str, list[str]]:
     parser = _TweetHTMLParser()
     parser.feed(html)
     return parser.text, parser.links
+
+
+class _LinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            href = dict(attrs).get("href")
+            if href and href.startswith("http"):
+                self._links.append(href)
+
+    @property
+    def links(self) -> list[str]:
+        return list(self._links)
+
+
+def _extract_links_from_html(html: str) -> list[str]:
+    parser = _LinkExtractor()
+    try:
+        parser.feed(html)
+    except Exception:
+        logger.debug("HTML link extraction failed", exc_info=True)
+    return parser.links
+
+
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").removeprefix("www.")
+    if hostname == "arxiv.org" and parsed.path.startswith("/pdf/"):
+        return url.replace("/pdf/", "/abs/", 1)
+    return url
+
+
+def _is_allowed_link(url: str) -> bool:
+    hostname = (urlparse(url).hostname or "").removeprefix("www.")
+    if hostname in LINK_EXTRACT_DOMAINS:
+        return True
+    return any(hostname.endswith(suffix) for suffix in LINK_EXTRACT_DOMAIN_SUFFIXES)
+
+
+def _filter_allowed_links(urls: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in urls:
+        normalized = _normalize_url(url)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if _is_allowed_link(normalized):
+            result.append(normalized)
+    return result
 
 
 def classify_item_type(url: str) -> str:
@@ -116,12 +181,12 @@ def _extract_full_text(url: str) -> Optional[str]:
     return None
 
 
-def _extract_tweet_content(entry_data: dict) -> Optional[str]:
+def _extract_tweet_content(entry_data: dict) -> tuple[Optional[str], list[str]]:
     summary = entry_data.get("summary")
     if not summary:
-        return None
-    text, _links = _parse_tweet_html(summary)
-    return text[:MAX_TEXT_CHARS] if text else None
+        return None, []
+    text, links = _parse_tweet_html(summary)
+    return (text[:MAX_TEXT_CHARS] if text else None), links
 
 
 def _display_author(
@@ -142,6 +207,49 @@ def _parse_single_feed(feed: Feed) -> Optional[object]:
     except Exception:
         logger.exception("Failed to parse feed %s", feed.url)
         return None
+
+
+def ingest_linked_items(
+    db: Database,
+    parent_item_id: str,
+    urls: list[str],
+    *,
+    skip_embed: bool = False,
+) -> list[str]:
+    new_ids: list[str] = []
+    for url in urls:
+        try:
+            if db.get_item_by_url(url) is not None:
+                logger.debug("Linked URL already exists, skipping: %s", url)
+                continue
+
+            text = _extract_full_text(url)
+
+            embedding = None
+            if text and not skip_embed:
+                try:
+                    embedding = embed_text(text)
+                except Exception:
+                    logger.exception("Embedding failed for linked URL: %s", url)
+
+            item_id = db.add_item(
+                url=url,
+                source_type="link_extraction",
+                item_type=classify_item_type(url),
+                text=text,
+                embedding=embedding,
+                source_item_id=parent_item_id,
+            )
+            logger.info(
+                "Ingested linked item: %s (id=%s, parent=%s)",
+                url,
+                item_id,
+                parent_item_id,
+            )
+            new_ids.append(item_id)
+        except Exception:
+            logger.exception("Failed to ingest linked URL: %s", url)
+    return new_ids
 
 
 def poll_feeds(
@@ -234,11 +342,12 @@ def poll_feeds(
         item_type = item_types[i]
 
         if item_type == "tweet":
-            text = _extract_tweet_content(entry_data)
+            text, raw_links = _extract_tweet_content(entry_data)
         else:
             text = fetched_texts.get(i)
             if not text and entry_data["summary"]:
                 text = entry_data["summary"][:MAX_TEXT_CHARS]
+            raw_links = _extract_links_from_html(entry_data.get("summary") or "")
 
         pending.append(
             {
@@ -252,6 +361,7 @@ def poll_feeds(
                 "source": entry_data["feed_title"],
                 "text": text,
                 "timestamp": entry_data["timestamp"],
+                "_links": _filter_allowed_links(raw_links),
             }
         )
 
@@ -281,6 +391,7 @@ def poll_feeds(
                     "Batch embedding failed; storing items without embeddings"
                 )
 
+    parent_links: list[tuple[str, list[str]]] = []
     for item_data, embedding in zip(pending, embeddings):
         try:
             item_id = db.add_item(
@@ -295,8 +406,16 @@ def poll_feeds(
                 timestamp=item_data["timestamp"],
             )
             new_item_ids.append(item_id)
+            if item_data.get("_links"):
+                parent_links.append((item_id, item_data["_links"]))
         except Exception:
             logger.exception("Failed to store item %s", item_data["url"])
+
+    for parent_id, links in parent_links:
+        linked_ids = ingest_linked_items(
+            db, parent_id, links, skip_embed=skip_embed
+        )
+        new_item_ids.extend(linked_ids)
 
     logger.info("Poll complete: %d new items ingested", len(new_item_ids))
     return new_item_ids
@@ -310,6 +429,7 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
     title: Optional[str] = None
     author: Optional[str] = None
     text: Optional[str] = None
+    downloaded: Optional[str] = None
 
     try:
         downloaded = trafilatura.fetch_url(url)
@@ -345,6 +465,12 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
             embedding=embedding,
         )
         logger.info("Ingested manual URL: %s (id=%s)", url, item_id)
+
+        if downloaded:
+            links = _filter_allowed_links(_extract_links_from_html(downloaded))
+            if links:
+                ingest_linked_items(db, item_id, links)
+
         return item_id
     except Exception:
         logger.exception("Failed to store manual URL: %s", url)
