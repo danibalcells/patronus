@@ -149,6 +149,15 @@ TELEGRAM_BOT_TOKEN=...
 
 Each script in `scripts/` is a thin entry point that loads config, opens the DB, calls a library function, and exits. Scripts add the project root to `sys.path` so `import patronus` works without installation.
 
+**Daily digest script:**
+```bash
+python scripts/send_digest.py [--db PATH] [--terminal-only] [--no-penalty] [--force-notion-refresh]
+```
+- `--db`: Path to SQLite database (default: `db.sqlite3`)
+- `--terminal-only`: Print to terminal only, don't send to Telegram
+- `--no-penalty`: Ignore repeat penalty for already-digested items
+- `--force-notion-refresh`: Force refresh Notion context, bypassing cache
+
 **Crontab:**
 ```
 0 */2 * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
@@ -221,9 +230,9 @@ config/
 
 | Module | Status | What changed |
 |--------|--------|--------------|
-| `config.py` | ✅ Changed | `NotionConfig` dataclass, `notion_token`/`google_api_key` env vars |
+| `config.py` | ✅ Changed | `NotionConfig`, `AgentConfig` dataclasses, `digest.mode` field, env vars |
 | `db.py` | ✅ Changed | `ContextSnapshot` table for caching personalization context |
-| `llm.py` | ✅ **New** | Provider-agnostic LLM client — routes `"provider/model"` strings to Anthropic, Google (Gemini), or OpenAI |
+| `llm.py` | ✅ **New** | Provider-agnostic LLM client — `complete()` + `complete_with_tools()` with `ToolCall`/`LLMResponse` types |
 | `embed.py` | Changed | Provider routing via `llm.py` (same `embed_text`/`embed_batch` interface) |
 | `ingest.py` | Unchanged | RSS/Atom polling, content extraction, manual URL add |
 | `rank.py` | Unchanged | Cosine similarity + selection (used by `tools/local.py` as backend) |
@@ -231,12 +240,12 @@ config/
 | `context.py` | ✅ **New** | `PersonalizationSource` protocol, `Context` dataclass, `merge_sources()` |
 | `interests.py` | ✅ Changed | `InterestsSource` class implements `PersonalizationSource`; `load_interest_vectors()` preserved |
 | `notion.py` | ✅ **New** | `NotionSource` implements `PersonalizationSource` — pulls from 5 Notion DBs, extracts text blocks (including synced blocks), summarizes via LLM, caches to DB |
-| `agent.py` | **New** | LLM editor agent: receives context, calls tools, returns structured `Digest` |
-| `digest.py` | Changed | `Digest` gains typed sections; `generate_digest` dispatches to agent or Stage 1 path |
-| `pipeline.py` | **New** | `DigestPipeline` orchestrator — wires sources, tools, agent, and outputs |
-| `bot.py` | Renamed | Was `telegram.py` — bot command handlers (`/add`, `/digest`, `/status`) |
-| `tools/` | **New** | Agent retrieval tools (local DB + external APIs) |
-| `output/` | **New** | Pluggable output layer (Telegram, terminal, XML feed) |
+| `agent.py` | ✅ **New** | LLM editor agent: receives context, calls tools via `submit_digest`, returns structured `Digest` |
+| `digest.py` | ✅ Changed | `SectionType` enum, `DigestSection` model; `generate_digest` dispatches to agent or Stage 1 path |
+| `pipeline.py` | ✅ **New** | `DigestPipeline` orchestrator — wires sources, tools, agent, and outputs |
+| `bot.py` | ✅ Renamed | Was `telegram.py` — bot command handlers, uses pipeline for digest generation |
+| `tools/` | ✅ **New** | `ToolRegistry`, `Tool` ABC, local retrieval tools, Arxiv skeleton |
+| `output/` | ✅ **New** | `Output` protocol, `TelegramOutput`, `TerminalOutput`, feed skeleton |
 
 ### Key abstractions
 
@@ -277,19 +286,19 @@ class Tool(ABC):
 
 ### Module responsibilities (new and changed modules)
 
-**`llm.py`** ✅ — Provider-agnostic LLM client. Exposes `complete(model, *, system, user_message, max_tokens)` where `model` is a `"provider/model-name"` string (e.g. `"google/gemini-2.5-flash-lite"`, `"anthropic/claude-haiku-4-5-20251001"`, `"openai/gpt-4o-mini"`). Parses the provider prefix and routes to the right SDK. Uses lazy singleton clients per provider. Callers pass their task's configured model string and don't know or care which provider backs it.
+**`llm.py`** ✅ — Provider-agnostic LLM client. Exposes `complete(model, *, system, user_message, max_tokens)` for simple completions and `complete_with_tools(model, *, system, messages, tools, max_tokens)` for tool-use workflows. Both accept `"provider/model-name"` strings (e.g. `"anthropic/claude-sonnet-4-20250514"`, `"openai/gpt-4o-mini"`). Tool use returns a common `LLMResponse` dataclass containing `text`, `tool_calls: list[ToolCall]`, and `stop_reason`. Helper functions `build_tool_result_message()` and `build_assistant_message_from_response()` construct the message dicts for multi-turn tool-use conversations. Anthropic and OpenAI tool use are implemented; Google can be added when needed. Uses lazy singleton clients per provider.
 
 **`context.py`** ✅ — Defines the `PersonalizationSource` protocol (`get_context()`, `get_interest_vectors()`) and a `Context` dataclass (prose summary + optional interest vectors). `merge_sources(sources, config)` concatenates context strings and merges vector dicts from all available sources, gracefully skipping any source that throws.
 
 **`interests.py`** ✅ (changed) — `InterestsSource` class implements `PersonalizationSource`. `get_context()` returns topic descriptions as prose. `get_interest_vectors()` returns the embedded vectors via the existing `load_interest_vectors()` function, which is preserved for backward compatibility.
 
-**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. Queries 5 Notion databases (Journal, Work Diary, Notes, Library highlights, Reviews) filtered by `last_edited_time`. Extracts text from all block types (paragraphs, headings, lists, toggles, checkboxes, quotes, callouts, code, equations, bookmarks, table rows) including synced blocks (transparently resolves both original and reference synced blocks). Sends all extracted content in a single LLM call (via `llm.complete()`) with a summarization prompt targeting ~5k tokens of output. Fallback logic: if fewer than `min_entries_threshold` entries found in the configured lookback window, expands to `fallback_lookback_days`; if still below threshold, returns empty string. Optionally caches generated summaries to a `ContextSnapshot` table via the DB.
+**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. Queries 5 Notion databases (Journal, Work Diary, Notes, Library highlights, Reviews) filtered by `last_edited_time`. Extracts text from all block types (paragraphs, headings, lists, toggles, checkboxes, quotes, callouts, code, equations, bookmarks, table rows) including synced blocks (transparently resolves both original and reference synced blocks). Sends all extracted content in a single LLM call (via `llm.complete()`) with a summarization prompt targeting ~5k tokens of output. Fallback logic: if fewer than `min_entries_threshold` entries found in the configured lookback window, expands to `fallback_lookback_days`; if still below threshold, returns empty string. Caches generated summaries to a `ContextSnapshot` table via the DB with a configurable TTL (`cache_ttl_hours`, default 24 hours). By default, uses cached context if available and fresh (age < TTL). Accepts a `force_refresh` parameter to bypass cache and fetch fresh data. On LLM failure with stale cache available, falls back to stale cache rather than failing completely.
 
-**`agent.py`** — The LLM editor agent. `plan_and_assemble(config, context, tool_registry)` runs the agent loop: sends the personalization context as a system prompt, lets the agent call retrieval tools via the LLM tool use API, and collects the structured output — a `Digest` with typed sections. The agent decides which sections to include, how many items each gets, and writes summaries as part of assembly.
+**`agent.py`** ✅ — The LLM editor agent. `plan_and_assemble(config, context, tool_registry)` runs the agent loop: sends the personalization context and an editorial system prompt, lets the agent call retrieval tools via `llm.complete_with_tools()`, and collects structured output via a `submit_digest` tool that the agent calls to deliver the final `Digest` with typed sections. The agent decides which sections to include, how many items each gets, and writes summaries as part of assembly. The loop is capped at `max_iterations` (configurable) to prevent runaway API calls.
 
-**`digest.py`** (changed) — The `Digest` data model gains sections. `DigestSection` has a `type` (e.g. `long_form_pick`, `paper_roundup`, `headlines`, `serendipity`), a `title`, and a list of `DigestItem`s. `generate_digest()` checks config and dispatches to either the Stage 1 deterministic path (existing rank → select → summarize logic) or the Stage 2 agent path. Formatting logic moves out to the output layer.
+**`digest.py`** ✅ (changed) — The `Digest` data model gains sections via `SectionType` enum and `DigestSection` dataclass. `DigestItem` is extended with explicit `item_id`, `title`, `url`, `source`, `author` fields for agent-produced items (Stage 1 items still use `scored_item`). `generate_digest()` checks `config.digest.mode` and dispatches to `generate_digest_deterministic()` (Stage 1) or the `DigestPipeline` (Stage 2). Formatting logic moves out to the output layer.
 
-**`pipeline.py`** — The top-level orchestrator. `DigestPipeline` is initialized with a config, DB, list of `PersonalizationSource`s, and list of `Output`s. `run()` merges context from all sources, generates a digest (agent or deterministic), and dispatches to all outputs. Scripts and the bot instantiate a pipeline and call `run()`.
+**`pipeline.py`** ✅ — The top-level orchestrator. `DigestPipeline` is initialized with a config, DB, list of `PersonalizationSource`s, and list of `Output`s. `run()` merges context from all sources, generates a digest (agent or deterministic), saves to DB, and dispatches to all outputs. Falls back to deterministic if agent produces an empty digest or no personalization context is available. Scripts and the bot instantiate a pipeline and call `run()`.
 
 **`bot.py`** (renamed from `telegram.py`) — Telegram bot command handlers (`/add`, `/digest`, `/status`). The `/digest` command instantiates a pipeline and calls `run()`. Message delivery is handled by `output/telegram.py`.
 
@@ -397,10 +406,16 @@ digest:
 polling:
   interval_hours: 2
 
-models:
-  embedding: "openai/text-embedding-3-small"
-  summarization: "anthropic/claude-haiku-4-5-20251001"
-  agent: "anthropic/claude-sonnet-4-20250514"
+embedding:
+  model: "text-embedding-3-small"
+
+summarization:
+  model: "claude-haiku-4-5-20251001"
+
+agent:
+  model: "anthropic/claude-sonnet-4-20250514"
+  max_iterations: 10
+  max_tokens: 4096
 
 notion:
   database_ids:
@@ -408,6 +423,11 @@ notion:
     work_diary: "..."
     library: "..."
   lookback_days: 14
+  fallback_lookback_days: 30
+  min_entries_threshold: 3
+  max_chars_per_entry: 3000
+  summary_model: "google/gemini-2.5-flash-lite"
+  cache_ttl_hours: 24
 
 outputs:
   - type: telegram
@@ -436,7 +456,8 @@ NOTION_TOKEN=secret_...
 - **`telegram.py` splits into `bot.py` + `output/telegram.py`.** Bot commands are an input interface (control plane). Digest delivery is an output concern. Separating them lets the pipeline dispatch to Telegram without importing bot machinery.
 - **Tools as a package.** Each external API (Arxiv, later OpenAlex, citations) has different auth, parsing, and error handling. One file per API, a shared base class, and a registry that produces tool definitions for the LLM API. Adding a tool = adding a file.
 - **Notion as optional.** If Notion is unavailable, the pipeline degrades to static interests — fewer personalization sources, not a failure. The `PersonalizationSource` protocol makes this natural: the pipeline merges whatever sources are available.
-- **Direct Claude tool use, not a framework.** The agent is single-purpose (plan a digest) with a fixed set of tools. LangChain/LangGraph would add abstraction without value. The tool use API is straightforward and keeps the code readable.
+- **Provider-agnostic tool use, not a framework.** `llm.py` exposes a common `complete_with_tools()` interface with `ToolCall` and `LLMResponse` types. The agent works with these abstractions — swapping the agent model from Claude to Gemini or GPT is a config change. LangChain/LangGraph would add abstraction without value for a single-purpose agent with a fixed set of tools.
+- **Notion context caching.** Fetching and summarizing Notion content is expensive (multiple API calls + LLM summarization). The system caches Notion context summaries in the DB with a configurable TTL (default 24 hours via `cache_ttl_hours`). By default, the digest uses cached context if available and fresh. The cache can be bypassed with `--force-notion-refresh` flag in `scripts/send_digest.py`. On LLM failure, the system falls back to stale cache if available rather than failing completely. This improves reliability and reduces API costs during development and testing.
 
 ## Development
 

@@ -3,6 +3,7 @@ digest:
   max_per_topic: 3
   schedule: "08:00"
   timezone: "America/New_York"
+  mode: "agent"
 
 polling:
   interval_hours: 2
@@ -12,6 +13,11 @@ embedding:
 
 summarization:
   model: "claude-haiku-4-5-20251001"
+
+agent:
+  model: "anthropic/claude-sonnet-4-5-20250929"
+  max_iterations: 10
+  max_tokens: 4096
 
 telegram:
   chat_id: "1646448265"
@@ -28,6 +34,6 @@ notion:
   fallback_lookback_days: 45
   min_entries_threshold: 3
   max_chars_per_entry: 10000
-  summary_model: "google/gemini-2.5-flash-lite"
+  cache_ttl_hours: 24
   summary_model: "anthropic/claude-sonnet-4-5-20250929"
   # summary_model: "google/gemini-3-flash-preview"

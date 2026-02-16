@@ -23,13 +23,21 @@ class Context:
     vectors: dict[str, np.ndarray] = field(default_factory=dict)
 
 
-def merge_sources(sources: list[PersonalizationSource], config: Config) -> Context:
+def merge_sources(
+    sources: list[PersonalizationSource],
+    config: Config,
+    notion_force_refresh: bool = False,
+) -> Context:
     prose_parts: list[str] = []
     vectors: dict[str, np.ndarray] = {}
 
     for source in sources:
         try:
-            context_str = source.get_context(config)
+            from patronus.notion import NotionSource
+            if isinstance(source, NotionSource):
+                context_str = source.get_context(config, force_refresh=notion_force_refresh)
+            else:
+                context_str = source.get_context(config)
             if context_str:
                 prose_parts.append(context_str)
         except Exception:

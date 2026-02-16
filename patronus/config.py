@@ -25,6 +25,14 @@ class DigestConfig:
     schedule: str = "08:00"
     timezone: str = "America/New_York"
     repeat_penalty: float = 0.85
+    mode: str = "deterministic"
+
+
+@dataclass
+class AgentConfig:
+    model: str = "anthropic/claude-sonnet-4-20250514"
+    max_iterations: int = 10
+    max_tokens: int = 4096
 
 
 @dataclass
@@ -55,6 +63,7 @@ class NotionConfig:
     min_entries_threshold: int = 3
     max_chars_per_entry: int = 3000
     summary_model: str = "google/gemini-2.5-flash-lite"
+    cache_ttl_hours: int = 24
 
 
 @dataclass
@@ -65,6 +74,7 @@ class Config:
     summarization: SummarizationConfig
     telegram: TelegramConfig
     topics: dict[str, TopicConfig]
+    agent: AgentConfig | None = None
     notion: NotionConfig | None = None
     openai_api_key: str = ""
     anthropic_api_key: str = ""
@@ -101,6 +111,9 @@ def load_config(
     notion_raw = raw.get("notion")
     notion_cfg = NotionConfig(**notion_raw) if notion_raw else None
 
+    agent_raw = raw.get("agent")
+    agent_cfg = AgentConfig(**agent_raw) if agent_raw else AgentConfig()
+
     return Config(
         digest=DigestConfig(**raw.get("digest", {})),
         polling=PollingConfig(**raw.get("polling", {})),
@@ -108,6 +121,7 @@ def load_config(
         summarization=SummarizationConfig(**raw.get("summarization", {})),
         telegram=TelegramConfig(**raw.get("telegram", {})),
         topics=topics,
+        agent=agent_cfg,
         notion=notion_cfg,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),

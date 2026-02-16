@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from patronus import setup_logging
 from patronus.config import load_config
 from patronus.db import Database
-from patronus.telegram import run_bot
+from patronus.bot import run_bot
 
 
 def main() -> None:

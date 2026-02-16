@@ -129,22 +129,62 @@ class NotionSource:
             self._client = NotionClient(auth=config.notion_token)
         return self._client
 
-    def get_context(self, config: Config) -> str:
+    def _get_cached_context(self, config: Config, allow_stale: bool = False) -> str:
+        if self._db is None or config.notion is None:
+            return ""
+
+        snapshot = self._db.get_latest_context_snapshot("notion")
+        if snapshot is None or not snapshot.content:
+            return ""
+
+        if allow_stale:
+            return snapshot.content
+
+        from datetime import datetime, timedelta, timezone
+        try:
+            generated_at = datetime.fromisoformat(snapshot.generated_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - generated_at).total_seconds() / 3600
+            if age_hours <= config.notion.cache_ttl_hours:
+                return snapshot.content
+        except (ValueError, AttributeError):
+            logger.warning("Invalid timestamp in cached context snapshot", exc_info=True)
+
+        return ""
+
+    def get_context(self, config: Config, force_refresh: bool = False) -> str:
         if config.notion is None:
             return ""
 
+        if not force_refresh:
+            cached = self._get_cached_context(config)
+            if cached:
+                logger.info("Using cached Notion context (%d chars)", len(cached))
+                return cached
+
+        logger.info("Fetching fresh Notion context")
         entries = self._fetch_all_entries(config, config.notion.lookback_days)
 
         if len(entries) < config.notion.min_entries_threshold:
             entries = self._fetch_all_entries(config, config.notion.fallback_lookback_days)
 
         if len(entries) < config.notion.min_entries_threshold:
+            logger.warning("Insufficient Notion entries (%d < %d), returning empty context",
+                         len(entries), config.notion.min_entries_threshold)
             return ""
 
-        summary = self._summarize_entries(entries, config)
+        try:
+            summary = self._summarize_entries(entries, config)
+        except Exception:
+            logger.warning("Failed to generate fresh Notion summary", exc_info=True)
+            stale_cached = self._get_cached_context(config, allow_stale=True)
+            if stale_cached:
+                logger.info("Using stale cached Notion context as fallback (%d chars)", len(stale_cached))
+                return stale_cached
+            return ""
 
         if self._db is not None and summary:
             self._db.save_context_snapshot("notion", summary)
+            logger.info("Saved fresh Notion context to cache (%d chars)", len(summary))
 
         return summary
 

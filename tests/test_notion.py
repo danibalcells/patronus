@@ -609,3 +609,305 @@ class TestQueryDatabasePagination:
 
         second_query_kwargs = mock_client.data_sources.query.call_args_list[1][1]
         assert second_query_kwargs["start_cursor"] == "cursor-1"
+
+
+class TestNotionContextCaching:
+    @patch("patronus.notion.complete")
+    def test_uses_fresh_cache_when_available(self, mock_complete: MagicMock) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+                cache_ttl_hours=24,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.save_context_snapshot("notion", "Cached context from 12 hours ago")
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is not None
+        snapshot.generated_at = recent_time
+        
+        with db._session() as session:
+            session.add(snapshot)
+            session.commit()
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == "Cached context from 12 hours ago"
+        mock_complete.assert_not_called()
+        mock_client.data_sources.query.assert_not_called()
+
+    @patch("patronus.notion.complete")
+    def test_fetches_fresh_when_cache_stale(self, mock_complete: MagicMock) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+                cache_ttl_hours=24,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+        stale_time = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.save_context_snapshot("notion", "Old cached context")
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is not None
+        snapshot.generated_at = stale_time
+        
+        with db._session() as session:
+            session.add(snapshot)
+            session.commit()
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Fresh entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("Fresh content"))],
+            "has_more": False,
+        }
+        mock_complete.return_value = "Fresh summary from Notion"
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == "Fresh summary from Notion"
+        mock_complete.assert_called_once()
+
+    @patch("patronus.notion.complete")
+    def test_fetches_fresh_when_no_cache(self, mock_complete: MagicMock) -> None:
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("Content"))],
+            "has_more": False,
+        }
+        mock_complete.return_value = "Fresh summary"
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == "Fresh summary"
+        mock_complete.assert_called_once()
+
+    @patch("patronus.notion.complete")
+    def test_force_refresh_bypasses_cache(self, mock_complete: MagicMock) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+                cache_ttl_hours=24,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.save_context_snapshot("notion", "Very fresh cached context")
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is not None
+        snapshot.generated_at = recent_time
+        
+        with db._session() as session:
+            session.add(snapshot)
+            session.commit()
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "New entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("New content"))],
+            "has_more": False,
+        }
+        mock_complete.return_value = "Forced fresh summary"
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config, force_refresh=True)
+
+        assert result == "Forced fresh summary"
+        mock_complete.assert_called_once()
+
+    @patch("patronus.notion.complete")
+    def test_does_not_cache_empty_summary(self, mock_complete: MagicMock) -> None:
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=10,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Only one")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [],
+            "has_more": False,
+        }
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == ""
+        mock_complete.assert_not_called()
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is None
+
+    @patch("patronus.notion.complete")
+    def test_uses_stale_cache_on_llm_failure(self, mock_complete: MagicMock) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+                cache_ttl_hours=24,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+        stale_time = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.save_context_snapshot("notion", "Stale but valid cached context")
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is not None
+        snapshot.generated_at = stale_time
+        
+        with db._session() as session:
+            session.add(snapshot)
+            session.commit()
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("Content"))],
+            "has_more": False,
+        }
+        mock_complete.side_effect = Exception("LLM API down")
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == "Stale but valid cached context"
+        mock_complete.assert_called_once()
+
+    @patch("patronus.notion.complete")
+    def test_returns_empty_on_llm_failure_with_no_cache(self, mock_complete: MagicMock) -> None:
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("Content"))],
+            "has_more": False,
+        }
+        mock_complete.side_effect = Exception("LLM API down")
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == ""
+        mock_complete.assert_called_once()
+
+    @patch("patronus.notion.complete")
+    def test_handles_invalid_cache_timestamp(self, mock_complete: MagicMock) -> None:
+        mock_client = MagicMock()
+        config = _make_config(
+            notion=NotionConfig(
+                database_ids={"journal": "db-j"},
+                min_entries_threshold=1,
+            )
+        )
+
+        db = Database(db_path=":memory:")
+        db.save_context_snapshot("notion", "Cached with bad timestamp")
+        
+        snapshot = db.get_latest_context_snapshot("notion")
+        assert snapshot is not None
+        snapshot.generated_at = "not-a-timestamp"
+        
+        with db._session() as session:
+            session.add(snapshot)
+            session.commit()
+
+        mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-j", "name": "source"}],
+        }
+        mock_client.data_sources.query.return_value = {
+            "results": [_make_page("p1", "Entry")],
+            "has_more": False,
+        }
+        mock_client.blocks.children.list.return_value = {
+            "results": [_make_block("paragraph", _rt("Content"))],
+            "has_more": False,
+        }
+        mock_complete.return_value = "Fresh summary"
+
+        source = NotionSource(notion_client=mock_client, db=db)
+        result = source.get_context(config)
+
+        assert result == "Fresh summary"
+        mock_complete.assert_called_once()
+

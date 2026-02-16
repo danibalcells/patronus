@@ -19,11 +19,13 @@ from patronus.db import Database, Item, serialize_embedding
 from patronus.digest import (
     Digest,
     DigestItem,
+    DigestSection,
+    SectionType,
     _apply_repeat_penalty,
-    _escape_markdown_v2,
-    format_telegram,
     generate_digest,
+    generate_digest_deterministic,
 )
+from patronus.output.telegram import _escape_markdown_v2, format_telegram
 from patronus.rank import ScoredItem
 
 
@@ -190,6 +192,117 @@ class TestDigestDataclass:
         d = Digest(items=[], generated_at="now")
         assert d.item_count == 0
 
+    def test_item_count_from_sections(self) -> None:
+        d = Digest(
+            sections=[
+                DigestSection(type=SectionType.LONG_FORM_PICK, title="Pick",
+                              items=[DigestItem(title="A", url="u", summary="s")]),
+                DigestSection(type=SectionType.HEADLINES, title="Headlines",
+                              items=[DigestItem(title="B", url="u", summary="s"),
+                                     DigestItem(title="C", url="u", summary="s")]),
+            ],
+            generated_at="now",
+            mode="agent",
+        )
+        assert d.item_count == 3
+
+    def test_all_items_from_sections(self) -> None:
+        items_a = [DigestItem(title="A", url="u", summary="s")]
+        items_b = [DigestItem(title="B", url="u", summary="s"), DigestItem(title="C", url="u", summary="s")]
+        d = Digest(
+            sections=[
+                DigestSection(type=SectionType.LONG_FORM_PICK, title="Pick", items=items_a),
+                DigestSection(type=SectionType.HEADLINES, title="Headlines", items=items_b),
+            ],
+            generated_at="now",
+            mode="agent",
+        )
+        all_items = d.all_items
+        assert len(all_items) == 3
+        assert all_items[0].title == "A"
+        assert all_items[2].title == "C"
+
+    def test_all_items_from_flat_list(self) -> None:
+        items = [DigestItem(scored_item=_make_scored(), summary="s")]
+        d = Digest(items=items, generated_at="now")
+        assert d.all_items == items
+
+    def test_sections_take_priority_for_item_count(self) -> None:
+        d = Digest(
+            items=[DigestItem(summary="old")],
+            sections=[DigestSection(type=SectionType.HEADLINES, title="H",
+                                     items=[DigestItem(title="X", url="u", summary="s")])],
+            generated_at="now",
+        )
+        assert d.item_count == 1
+
+    def test_mode_defaults_to_deterministic(self) -> None:
+        d = Digest()
+        assert d.mode == "deterministic"
+
+
+class TestSectionType:
+    def test_all_values(self) -> None:
+        expected = {"long_form_pick", "paper_roundup", "headlines", "serendipity", "chatter"}
+        assert {st.value for st in SectionType} == expected
+
+    def test_string_enum(self) -> None:
+        assert SectionType.LONG_FORM_PICK == "long_form_pick"
+        assert isinstance(SectionType.HEADLINES, str)
+
+
+class TestDigestItem:
+    def test_defaults(self) -> None:
+        item = DigestItem()
+        assert item.scored_item is None
+        assert item.summary == ""
+        assert item.item_id == ""
+        assert item.title == ""
+        assert item.url == ""
+        assert item.source == ""
+        assert item.author == ""
+        assert item.item_type == "article"
+
+    def test_agent_style_item(self) -> None:
+        item = DigestItem(
+            item_id="abc",
+            title="My Paper",
+            url="https://example.com",
+            source="Arxiv",
+            author="Alice",
+            summary="Great paper.",
+            item_type="paper",
+        )
+        assert item.item_id == "abc"
+        assert item.scored_item is None
+
+
+class TestGenerateDigestRouting:
+    @patch("patronus.digest.generate_digest_deterministic")
+    def test_deterministic_mode(self, mock_det: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        config.digest.mode = "deterministic"
+        mock_det.return_value = Digest(generated_at="now", mode="deterministic")
+
+        result = generate_digest(config, db)
+        assert result.mode == "deterministic"
+        mock_det.assert_called_once_with(config, db, skip_penalty=False)
+        db.close()
+
+    @patch("patronus.pipeline.DigestPipeline.generate")
+    def test_agent_mode(self, mock_generate: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        config.digest.mode = "agent"
+        config.agent = None
+        mock_generate.return_value = Digest(generated_at="now", mode="agent")
+
+        result = generate_digest(config, db)
+        assert result.mode == "agent"
+        mock_generate.assert_called_once()
+        db.close()
+
 
 class TestGenerateDigest:
     @patch("patronus.digest.summarize_item")
@@ -218,7 +331,7 @@ class TestGenerateDigest:
             timestamp="2026-02-13T00:00:00Z",
         )
 
-        digest = generate_digest(config, db)
+        digest = generate_digest_deterministic(config, db)
 
         assert digest.item_count == 1
         assert digest.items[0].summary == "Generated summary."
@@ -249,7 +362,7 @@ class TestGenerateDigest:
         config = _make_config()
         mock_interests.return_value = {"ml": _unit_vec(1.0, 0.0)}
 
-        digest = generate_digest(config, db)
+        digest = generate_digest_deterministic(config, db)
 
         assert digest.item_count == 0
         mock_summarize.assert_not_called()
@@ -280,7 +393,7 @@ class TestGenerateDigest:
             timestamp="2026-02-13T00:00:00Z",
         )
 
-        digest = generate_digest(config, db)
+        digest = generate_digest_deterministic(config, db)
 
         assert digest.item_count == 1
         assert digest.items[0].summary == ""
@@ -311,7 +424,7 @@ class TestGenerateDigest:
             timestamp="2026-02-13T00:00:00Z",
         )
 
-        generate_digest(config, db)
+        generate_digest_deterministic(config, db)
 
         item = db.get_item(item_id)
         assert item is not None
@@ -357,7 +470,7 @@ class TestGenerateDigest:
             timestamp="2026-02-13T00:00:00Z",
         )
 
-        digest = generate_digest(config, db)
+        digest = generate_digest_deterministic(config, db)
 
         assert digest.item_count == 1
         assert digest.items[0].scored_item.item.url == "https://fresh.com"

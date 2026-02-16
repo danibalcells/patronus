@@ -8,20 +8,32 @@ import argparse
 from patronus import setup_logging
 from patronus.config import load_config
 from patronus.db import Database
-from patronus.telegram import send_digest_message
+from patronus.output.telegram import TelegramOutput
+from patronus.output.terminal import TerminalOutput
+from patronus.pipeline import DigestPipeline
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate and send the daily digest via Telegram")
+    parser = argparse.ArgumentParser(description="Generate and send the daily digest")
     parser.add_argument("--db", type=str, default="db.sqlite3", help="Path to SQLite database")
     parser.add_argument("--no-penalty", action="store_true", help="Ignore repeat penalty for already-digested items")
+    parser.add_argument("--terminal-only", action="store_true", help="Print to terminal only, don't send to Telegram")
+    parser.add_argument("--force-notion-refresh", action="store_true", help="Force refresh Notion context, bypassing cache")
     args = parser.parse_args()
 
     setup_logging()
 
     config = load_config()
+    outputs = []
+    if args.terminal_only:
+        outputs.append(TerminalOutput())
+    else:
+        outputs.append(TelegramOutput())
+        outputs.append(TerminalOutput())
+
     with Database(db_path=args.db) as db:
-        send_digest_message(config, db, skip_penalty=args.no_penalty)
+        pipeline = DigestPipeline(config, db, outputs=outputs)
+        pipeline.run(skip_penalty=args.no_penalty, notion_force_refresh=args.force_notion_refresh)
 
 
 if __name__ == "__main__":

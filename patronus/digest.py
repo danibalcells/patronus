@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 
 from patronus.config import Config
 from patronus.db import Database
@@ -15,20 +15,54 @@ from patronus.summarize import summarize_item
 logger = logging.getLogger(__name__)
 
 
+class SectionType(str, Enum):
+    LONG_FORM_PICK = "long_form_pick"
+    PAPER_ROUNDUP = "paper_roundup"
+    HEADLINES = "headlines"
+    SERENDIPITY = "serendipity"
+    CHATTER = "chatter"
+
+
 @dataclass
 class DigestItem:
-    scored_item: ScoredItem
-    summary: str
+    scored_item: ScoredItem | None = None
+    summary: str = ""
+    item_id: str = ""
+    title: str = ""
+    url: str = ""
+    source: str = ""
+    author: str = ""
+    item_type: str = "article"
+
+
+@dataclass
+class DigestSection:
+    type: SectionType
+    title: str
+    items: list[DigestItem] = field(default_factory=list)
 
 
 @dataclass
 class Digest:
     items: list[DigestItem] = field(default_factory=list)
+    sections: list[DigestSection] = field(default_factory=list)
     generated_at: str = ""
+    mode: str = "deterministic"
 
     @property
     def item_count(self) -> int:
+        if self.sections:
+            return sum(len(s.items) for s in self.sections)
         return len(self.items)
+
+    @property
+    def all_items(self) -> list[DigestItem]:
+        if self.sections:
+            result: list[DigestItem] = []
+            for s in self.sections:
+                result.extend(s.items)
+            return result
+        return self.items
 
 
 def _now_utc() -> str:
@@ -48,15 +82,15 @@ def _apply_repeat_penalty(
     return scored_items
 
 
-def generate_digest(config: Config, db: Database, *, skip_penalty: bool = False) -> Digest:
+def generate_digest_deterministic(config: Config, db: Database, *, skip_penalty: bool = False) -> Digest:
     interest_vectors = load_interest_vectors(config)
     unread = db.get_unread_items()
-    logger.info("Generating digest from %d unread items", len(unread))
+    logger.info("Generating deterministic digest from %d unread items", len(unread))
 
     generated_at = _now_utc()
 
     if not unread:
-        return Digest(items=[], generated_at=generated_at)
+        return Digest(items=[], generated_at=generated_at, mode="deterministic")
 
     scored = rank_unread(unread, interest_vectors)
     if not skip_penalty:
@@ -88,87 +122,42 @@ def generate_digest(config: Config, db: Database, *, skip_penalty: bool = False)
         except Exception:
             logger.exception("Failed to summarize item %s", scored_item.item.id)
 
-        digest_items.append(DigestItem(scored_item=scored_item, summary=summary))
+        digest_items.append(DigestItem(
+            scored_item=scored_item,
+            summary=summary,
+            item_id=scored_item.item.id,
+            title=scored_item.item.title or "",
+            url=scored_item.item.url,
+            source=scored_item.item.source or "",
+            author=scored_item.item.author or "",
+            item_type=scored_item.item.item_type,
+        ))
         db.update_digest_history(scored_item.item.id, today)
 
-    digest = Digest(items=digest_items, generated_at=generated_at)
+    digest = Digest(items=digest_items, generated_at=generated_at, mode="deterministic")
 
-    formatted = format_telegram(digest, config)
     db.save_digest(
         generated_at=generated_at,
         item_count=digest.item_count,
-        formatted_text=formatted,
+        formatted_text="",
         items=[
             {
-                "item_id": di.scored_item.item.id,
+                "item_id": di.item_id or (di.scored_item.item.id if di.scored_item else ""),
                 "summary": di.summary,
-                "score": di.scored_item.score,
-                "matched_topic": di.scored_item.matched_topic,
+                "score": di.scored_item.score if di.scored_item else 0.0,
+                "matched_topic": di.scored_item.matched_topic if di.scored_item else "",
             }
             for di in digest_items
         ],
     )
 
-    logger.info("Digest generated with %d items", digest.item_count)
+    logger.info("Deterministic digest generated with %d items", digest.item_count)
     return digest
 
 
-def _clean_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", " ", text).strip()
-
-
-def _escape_markdown_v2(text: str) -> str:
-    return re.sub(r"([_*\[\]()~`>#+\-=|{}.!\\])", r"\\\1", text)
-
-
-def _escape_url(url: str) -> str:
-    return url.replace("\\", "\\\\").replace(")", "\\)")
-
-
-def _format_topic_section(topic_name: str, items: list[DigestItem]) -> str:
-    lines: list[str] = [f"\n*{_escape_markdown_v2(topic_name)}*"]
-    for di in items:
-        title = _clean_html(di.scored_item.item.title or "Untitled")
-        source = di.scored_item.item.source or ""
-        url = di.scored_item.item.url
-        summary = di.summary
-
-        line = f"[{_escape_markdown_v2(title)}]({_escape_url(url)})"
-        if source:
-            line += f" — _{_escape_markdown_v2(source)}_"
-        if summary:
-            line += f"\n{_escape_markdown_v2(summary)}"
-        lines.append(line)
-    return "\n\n".join(lines)
-
-
-def format_telegram_sections(digest: Digest, config: Config) -> list[str]:
-    if not digest.items:
-        return ["No items for today\\'s digest\\."]
-
-    groups: dict[str, list[DigestItem]] = {}
-    for di in digest.items:
-        topic = di.scored_item.matched_topic
-        groups.setdefault(topic, []).append(di)
-
-    date_str = digest.generated_at[:10] if digest.generated_at else ""
-    header = f"*Daily Digest* — {_escape_markdown_v2(date_str)}"
-
-    sections: list[str] = [header]
-
-    for topic_key in config.topics:
-        if topic_key not in groups:
-            continue
-        topic_name = config.topics[topic_key].name
-        sections.append(_format_topic_section(topic_name, groups[topic_key]))
-
-    for topic_key, items in groups.items():
-        if topic_key in config.topics:
-            continue
-        sections.append(_format_topic_section(topic_key, items))
-
-    return sections
-
-
-def format_telegram(digest: Digest, config: Config) -> str:
-    return "\n\n".join(format_telegram_sections(digest, config))
+def generate_digest(config: Config, db: Database, *, skip_penalty: bool = False) -> Digest:
+    if config.digest.mode == "agent":
+        from patronus.pipeline import DigestPipeline
+        pipeline = DigestPipeline(config, db)
+        return pipeline.generate()
+    return generate_digest_deterministic(config, db, skip_penalty=skip_penalty)

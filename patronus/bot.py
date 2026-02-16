@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Optional
 
 import telegram
 from telegram import Update
@@ -17,8 +16,8 @@ from telegram.ext import (
 
 from patronus.config import Config
 from patronus.db import Database
-from patronus.digest import format_telegram_sections, generate_digest
 from patronus.ingest import ingest_url
+from patronus.output.telegram import TelegramOutput, format_telegram_sections, send_message
 
 logger = logging.getLogger(__name__)
 
@@ -63,31 +62,6 @@ async def _send_sections(bot: telegram.Bot, chat_id: str, sections: list[str]) -
         await _send_markdown(bot, chat_id, message)
 
 
-def send_message(config: Config, text: str) -> None:
-    bot = telegram.Bot(token=config.telegram_bot_token)
-
-    async def _send() -> None:
-        async with bot:
-            await _send_markdown(bot, config.telegram.chat_id, text)
-
-    asyncio.run(_send())
-
-
-def send_digest_message(config: Config, db: Database, *, skip_penalty: bool = False) -> None:
-    digest = generate_digest(config, db, skip_penalty=skip_penalty)
-    if not digest.items:
-        send_message(config, "No items for today\\'s digest\\.")
-        return
-    sections = format_telegram_sections(digest, config)
-    bot = telegram.Bot(token=config.telegram_bot_token)
-
-    async def _send() -> None:
-        async with bot:
-            await _send_sections(bot, config.telegram.chat_id, sections)
-
-    asyncio.run(_send())
-
-
 async def _handle_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     config: Config = context.bot_data["config"]
     db: Database = context.bot_data["db"]
@@ -124,10 +98,14 @@ async def _handle_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("Generating digest...")
 
     try:
-        digest = await asyncio.to_thread(generate_digest, config, db)
-        if not digest.items:
+        from patronus.pipeline import DigestPipeline
+        pipeline = DigestPipeline(config, db)
+        digest = await asyncio.to_thread(pipeline.run)
+
+        if not digest.item_count:
             await update.message.reply_text("No unread items to build a digest from.")
             return
+
         sections = format_telegram_sections(digest, config)
         await _send_sections(context.bot, config.telegram.chat_id, sections)
     except Exception:
@@ -152,6 +130,7 @@ async def _handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"Items: {total} total, {unread} unread",
             f"Active feeds: {feeds}",
             f"Last digest: {last_digest}",
+            f"Mode: {config.digest.mode}",
         ]
         await update.message.reply_text("\n".join(lines))
     except Exception:
