@@ -222,7 +222,7 @@ scripts/
 ├── seed_feeds.py           # Unchanged
 ├── run_bot.py              # Runs bot.py
 ├── sync_notion_mirror.py   # NEW — sync Notion DBs to local SQLite mirror
-└── test_notion.py          # Manual test: fetch Notion context and print
+└── test_notion_context.py          # Manual test: fetch Notion context and print
 
 config/
 ├── config.yaml             # Extended with models, notion, output sections

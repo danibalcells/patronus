@@ -315,32 +315,59 @@ class NotionSource:
 
     def _get_entries_from_mirror(self, config: Config) -> list[NotionEntry] | None:
         if config.notion is None or not config.notion.mirror_path:
+            logger.debug("No mirror_path configured, falling back to Notion API")
             return None
         from patronus.notion_mirror import NotionMirror
         try:
             mirror = NotionMirror(config.notion.mirror_path)
         except Exception:
-            logger.warning("Failed to open Notion mirror at %s", config.notion.mirror_path, exc_info=True)
+            logger.warning("Failed to open Notion mirror at %s, falling back to API", config.notion.mirror_path, exc_info=True)
             return None
 
         with mirror:
+            page_count = mirror.page_count()
+            latest_sync = mirror.latest_synced_at()
+            logger.info(
+                "Notion mirror: %s (%d pages total, last synced: %s)",
+                config.notion.mirror_path,
+                page_count,
+                latest_sync or "never",
+            )
+
             if mirror.is_stale(config.notion.cache_ttl_hours):
                 logger.warning(
-                    "Notion mirror at %s is stale (>%dh), context may be outdated",
-                    config.notion.mirror_path,
+                    "Notion mirror is stale (last synced: %s, threshold: %dh) — "
+                    "run scripts/sync_notion_mirror.py to refresh; using stale data",
+                    latest_sync or "never",
                     config.notion.cache_ttl_hours,
                 )
 
             since = datetime.now(timezone.utc) - timedelta(days=config.notion.lookback_days)
             pages = mirror.get_recent(since=since)
+            logger.info(
+                "Mirror query (lookback %dd): %d pages found",
+                config.notion.lookback_days,
+                len(pages),
+            )
 
             if len(pages) < config.notion.min_entries_threshold:
                 since_fallback = datetime.now(timezone.utc) - timedelta(days=config.notion.fallback_lookback_days)
                 pages = mirror.get_recent(since=since_fallback)
+                logger.info(
+                    "Mirror query (fallback lookback %dd): %d pages found",
+                    config.notion.fallback_lookback_days,
+                    len(pages),
+                )
 
             if len(pages) < config.notion.min_entries_threshold:
+                logger.warning(
+                    "Mirror has too few entries (%d < threshold %d) — falling back to Notion API",
+                    len(pages),
+                    config.notion.min_entries_threshold,
+                )
                 return []
 
+            logger.info("Using mirror as context source (%d entries)", len(pages))
             return [
                 NotionEntry(
                     title=p.title,
@@ -367,7 +394,7 @@ class NotionSource:
             entries = mirror_entries
             source_label = "mirror"
         else:
-            logger.info("Fetching fresh Notion context via API")
+            logger.info("Fetching Notion context via live API")
             entries = fetch_notion_entries(
                 self._get_client(config), config, config.notion.lookback_days, self._data_source_ids
             )
@@ -425,8 +452,8 @@ class NotionSource:
         full_text = full_text[:_MAX_INPUT_CHARS]
 
         logger.info(
-            "Summarizer input: %d entries, %d chars (%d chars after truncation)",
-            len(entries), sum(len(p) for p in prompt_parts), len(full_text),
+            "Summarizer input: %d entries, %d chars (%d chars after truncation), model: %s",
+            len(entries), sum(len(p) for p in prompt_parts), len(full_text), config.notion.summary_model,
         )
 
         return complete(

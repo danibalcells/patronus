@@ -108,11 +108,11 @@ python scripts/test_agent_manual.py --db-path /tmp/test.db
 - Fast (uses 24h cache by default)
 - Easy to run repeatedly
 
-### `test_notion.py`
+### `test_notion_context.py`
 Manual test: Fetch and print Notion context.
 
 ```bash
-python scripts/test_notion.py
+python scripts/test_notion_context.py
 ```
 
 ## Design Pattern
