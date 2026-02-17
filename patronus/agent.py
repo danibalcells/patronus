@@ -14,6 +14,7 @@ from patronus.llm import (
     build_tool_result_message,
     complete_with_tools,
 )
+from patronus.observability import agent_run, iteration_span, llm_generation, tool_call
 from patronus.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -186,64 +187,101 @@ def plan_and_assemble(
         {"role": "user", "content": user_message},
     ]
 
-    for iteration in range(agent_config.max_iterations):
-        logger.info("Agent iteration %d/%d", iteration + 1, agent_config.max_iterations)
+    with agent_run(
+        "agent-digest-run",
+        {
+            "system_prompt": SYSTEM_PROMPT,
+            "user_message": user_message,
+            "model": agent_config.model,
+        },
+    ) as run_obs:
+        for iteration in range(agent_config.max_iterations):
+            logger.info("Agent iteration %d/%d", iteration + 1, agent_config.max_iterations)
 
-        response: LLMResponse = complete_with_tools(
-            agent_config.model,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-            tools=all_tools,
-            max_tokens=agent_config.max_tokens,
-        )
+            with iteration_span(f"iteration-{iteration + 1}") as iter_obs:
+                with llm_generation(
+                    "llm-call",
+                    agent_config.model,
+                    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                ) as gen_obs:
+                    response: LLMResponse = complete_with_tools(
+                        agent_config.model,
+                        system=SYSTEM_PROMPT,
+                        messages=messages,
+                        tools=all_tools,
+                        max_tokens=agent_config.max_tokens,
+                    )
+                    gen_obs.update(output={
+                        "text": response.text,
+                        "tool_calls": [{"name": tc.name, "input": tc.input} for tc in response.tool_calls],
+                        "stop_reason": response.stop_reason,
+                    })
 
-        submit_call = None
-        retrieval_calls = []
+                submit_call = None
+                retrieval_calls = []
 
-        for tc in response.tool_calls:
-            if tc.name == "submit_digest":
-                submit_call = tc
-            else:
-                retrieval_calls.append(tc)
+                for tc in response.tool_calls:
+                    if tc.name == "submit_digest":
+                        submit_call = tc
+                    else:
+                        retrieval_calls.append(tc)
 
-        if submit_call is not None:
-            logger.info("Agent submitted digest on iteration %d", iteration + 1)
-            try:
-                digest = _parse_submit_digest(submit_call.input)
-                logger.info(
-                    "Digest has %d sections, %d total items",
-                    len(digest.sections),
-                    digest.item_count,
-                )
-                return digest
-            except Exception:
-                logger.exception("Failed to parse submit_digest input")
+                if submit_call is not None:
+                    logger.info("Agent submitted digest on iteration %d", iteration + 1)
+                    try:
+                        digest = _parse_submit_digest(submit_call.input)
+                        logger.info(
+                            "Digest has %d sections, %d total items",
+                            len(digest.sections),
+                            digest.item_count,
+                        )
+                        digest_summary = {
+                            "sections": len(digest.sections),
+                            "items": digest.item_count,
+                            "section_types": [s.type.value for s in digest.sections],
+                            "iterations_used": iteration + 1,
+                        }
+                        iter_obs.update(output=digest_summary)
+                        run_obs.update(output=digest_summary)
+                        return digest
+                    except Exception:
+                        logger.exception("Failed to parse submit_digest input")
+                        messages.append(build_assistant_message_from_response(response))
+                        messages.append(build_tool_result_message(
+                            [submit_call],
+                            {submit_call.id: "Error: invalid digest format. Please try again with valid section types and item data."},
+                        ))
+                        iter_obs.update(output={"error": "invalid_digest_format"})
+                        continue
+
+                if not retrieval_calls and response.stop_reason == "end_turn":
+                    logger.warning("Agent stopped without calling submit_digest. Attempting to parse text response.")
+                    iter_obs.update(output={"error": "stopped_without_submit"})
+                    run_obs.update(output={"error": "stopped_without_submit"})
+                    return Digest(
+                        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        mode="agent",
+                    )
+
+                results: dict[str, str] = {}
+                for tc in retrieval_calls:
+                    logger.info("Executing tool: %s(%s)", tc.name, json.dumps(tc.input, default=str)[:200])
+                    with tool_call(tc.name, tc.input) as tc_obs:
+                        result = tool_registry.execute(tc.name, **tc.input)
+                        tc_obs.update(output=result.to_text()[:2000])
+                    results[tc.id] = result.to_text()
+                    logger.debug("Tool result: %s", result.to_text()[:600])
+
                 messages.append(build_assistant_message_from_response(response))
-                messages.append(build_tool_result_message(
-                    [submit_call],
-                    {submit_call.id: "Error: invalid digest format. Please try again with valid section types and item data."},
-                ))
-                continue
+                messages.append(build_tool_result_message(response.tool_calls, results))
 
-        if not retrieval_calls and response.stop_reason == "end_turn":
-            logger.warning("Agent stopped without calling submit_digest. Attempting to parse text response.")
-            return Digest(
-                generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                mode="agent",
-            )
+                iter_obs.update(output={
+                    "tool_calls_made": [tc.name for tc in retrieval_calls],
+                })
 
-        results: dict[str, str] = {}
-        for tc in retrieval_calls:
-            logger.info("Executing tool: %s(%s)", tc.name, json.dumps(tc.input, default=str)[:200])
-            result = tool_registry.execute(tc.name, **tc.input)
-            results[tc.id] = result.to_text()
-            logger.debug("Tool result: %s", result.to_text()[:600])
-
-        messages.append(build_assistant_message_from_response(response))
-        messages.append(build_tool_result_message(response.tool_calls, results))
-
-    logger.warning("Agent hit max iterations (%d) without submitting digest", agent_config.max_iterations)
-    return Digest(
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        mode="agent",
-    )
+        logger.warning("Agent hit max iterations (%d) without submitting digest", agent_config.max_iterations)
+        run_obs.update(output={"error": "max_iterations_reached", "iterations_used": agent_config.max_iterations})
+        return Digest(
+            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            mode="agent",
+        )

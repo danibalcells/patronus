@@ -19,16 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def _build_default_sources(config: Config, db: Database) -> list[PersonalizationSource]:
-    sources: list[PersonalizationSource] = [InterestsSource()]
-
     if config.notion and config.notion_token:
         try:
             from patronus.notion import NotionSource
-            sources.append(NotionSource(db=db))
+            return [NotionSource(db=db)]
         except Exception:
-            logger.warning("Failed to initialize NotionSource, skipping", exc_info=True)
+            logger.warning("Failed to initialize NotionSource, falling back to static interests", exc_info=True)
 
-    return sources
+    return [InterestsSource()]
 
 
 def _build_tool_registry(config: Config, db: Database) -> ToolRegistry:
