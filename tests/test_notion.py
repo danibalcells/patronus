@@ -295,6 +295,68 @@ class TestBlocksToText:
         assert "Page 1" in result
         assert "Page 2" in result
 
+    def test_unsupported_block_no_children_produces_no_output(self) -> None:
+        client = MagicMock()
+        ai_block = {
+            "id": "ai-block-id",
+            "type": "unsupported",
+            "unsupported": {},
+            "has_children": False,
+        }
+        result = _blocks_to_text(client, [ai_block])
+        assert result == ""
+        client.blocks.children.list.assert_not_called()
+
+    def test_unsupported_block_with_accessible_children_includes_text(self) -> None:
+        client = MagicMock()
+        ai_block = {
+            "id": "ai-block-id",
+            "type": "unsupported",
+            "unsupported": {},
+            "has_children": True,
+        }
+        child = _make_block("paragraph", _rt("AI meeting summary text"))
+        client.blocks.children.list.return_value = {
+            "results": [child],
+            "has_more": False,
+        }
+
+        result = _blocks_to_text(client, [ai_block])
+        assert "AI meeting summary text" in result
+
+    def test_unsupported_block_with_inaccessible_children_does_not_raise(self) -> None:
+        client = MagicMock()
+        ai_block = {
+            "id": "ai-block-id",
+            "type": "unsupported",
+            "unsupported": {},
+            "has_children": True,
+        }
+        client.blocks.children.list.side_effect = Exception("API does not support this block type")
+
+        result = _blocks_to_text(client, [ai_block])
+        assert result == ""
+
+    def test_unsupported_block_children_failure_logs_debug_not_warning(self, caplog) -> None:
+        import logging
+        client = MagicMock()
+        ai_block = {
+            "id": "ai-block-id",
+            "type": "unsupported",
+            "unsupported": {},
+            "has_children": True,
+        }
+        client.blocks.children.list.side_effect = Exception("Block type transcription is not supported via the API.")
+
+        with caplog.at_level(logging.DEBUG, logger="patronus.notion"):
+            _blocks_to_text(client, [ai_block])
+
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warning_records, "Expected no warnings for unsupported block children fetch failure"
+
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG and "ai-block-id" in r.message]
+        assert debug_records, "Expected a DEBUG log for unsupported block children fetch failure"
+
 
 class TestNotionSourceGetContext:
     def test_returns_empty_when_no_notion_config(self) -> None:

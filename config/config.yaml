@@ -37,3 +37,4 @@ notion:
   cache_ttl_hours: 24
   summary_model: "anthropic/claude-sonnet-4-5-20250929"
   # summary_model: "google/gemini-3-flash-preview"
+  mirror_path: "notion_mirror.sqlite3"

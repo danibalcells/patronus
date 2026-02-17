@@ -1664,6 +1664,8 @@ dependencies = [
     { name = "python-telegram-bot" },
     { name = "pyyaml" },
     { name = "sqlmodel" },
+    { name = "tenacity" },
+    { name = "tqdm" },
     { name = "trafilatura" },
 ]
 
@@ -1689,6 +1691,8 @@ requires-dist = [
     { name = "python-telegram-bot", specifier = ">=22.6" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "sqlmodel", specifier = ">=0.0.33" },
+    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "trafilatura", specifier = ">=2.0.0" },
 ]
 

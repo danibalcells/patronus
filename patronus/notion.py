@@ -7,12 +7,77 @@ from typing import Optional
 
 import numpy as np
 from notion_client import Client as NotionClient
+from notion_client.errors import HTTPResponseError
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+    wait_fixed,
+    RetryCallState,
+)
 
 from patronus.config import Config
 from patronus.db import Database
 from patronus.llm import complete
 
 logger = logging.getLogger(__name__)
+
+_MAX_RETRY_ATTEMPTS = 5
+_RETRY_AFTER_DEFAULT = 30
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    return isinstance(exc, HTTPResponseError) and exc.status == 429
+
+
+def _before_retry_log(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    wait = retry_state.next_action.sleep if retry_state.next_action else 0
+    if isinstance(exc, HTTPResponseError) and exc.status == 429:
+        retry_after = exc.headers.get("Retry-After")
+        logger.warning(
+            "Notion rate limit hit (attempt %d/%d). Waiting %.1fs (Retry-After: %s)",
+            retry_state.attempt_number,
+            _MAX_RETRY_ATTEMPTS,
+            wait,
+            retry_after or "not set",
+        )
+    else:
+        logger.warning(
+            "Retrying Notion API call after error (attempt %d/%d): %s",
+            retry_state.attempt_number,
+            _MAX_RETRY_ATTEMPTS,
+            exc,
+        )
+
+
+def _retry_after_wait(retry_state: RetryCallState) -> float:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, HTTPResponseError) and exc.status == 429:
+        raw = exc.headers.get("Retry-After")
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+    return 0.0
+
+
+def _notion_wait(retry_state: RetryCallState) -> float:
+    explicit = _retry_after_wait(retry_state)
+    if explicit > 0:
+        return explicit
+    return wait_exponential(multiplier=1, min=2, max=60)(retry_state)
+
+
+notion_retry = retry(
+    retry=retry_if_exception(_is_rate_limited),
+    wait=_notion_wait,
+    stop=stop_after_attempt(_MAX_RETRY_ATTEMPTS),
+    before_sleep=_before_retry_log,
+    reraise=True,
+)
 
 _MAX_INPUT_CHARS = 200_000
 _SUMMARY_MAX_TOKENS = 5000
@@ -114,6 +179,104 @@ class NotionEntry:
     author: str = ""
 
 
+def fetch_notion_entries(
+    client: NotionClient,
+    config: Config,
+    lookback_days: int,
+    data_source_id_cache: dict[str, str] | None = None,
+) -> list[NotionEntry]:
+    if config.notion is None:
+        return []
+    if data_source_id_cache is None:
+        data_source_id_cache = {}
+    entries: list[NotionEntry] = []
+    for db_name, db_id in config.notion.database_ids.items():
+        try:
+            db_entries = query_notion_database(
+                client, config, db_id, db_name, lookback_days, data_source_id_cache
+            )
+            entries.extend(db_entries)
+        except Exception:
+            logger.warning("Failed to query Notion database %s", db_name, exc_info=True)
+    return entries
+
+
+def resolve_data_source_id(
+    client: NotionClient,
+    db_id: str,
+    cache: dict[str, str],
+) -> str:
+    if db_id not in cache:
+        response = notion_retry(client.databases.retrieve)(database_id=db_id)
+        data_sources = response.get("data_sources", [])
+        if not data_sources:
+            raise ValueError(f"No data sources found for database {db_id}")
+        cache[db_id] = data_sources[0]["id"]
+    return cache[db_id]
+
+
+def query_notion_database(
+    client: NotionClient,
+    config: Config,
+    db_id: str,
+    db_name: str,
+    lookback_days: int,
+    data_source_id_cache: dict[str, str] | None = None,
+) -> list[NotionEntry]:
+    if data_source_id_cache is None:
+        data_source_id_cache = {}
+    ds_id = resolve_data_source_id(client, db_id, data_source_id_cache)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+
+    results: list[NotionEntry] = []
+    cursor: str | None = None
+
+    while True:
+        kwargs: dict = {
+            "filter": {
+                "timestamp": "last_edited_time",
+                "last_edited_time": {"after": cutoff},
+            },
+            "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
+        }
+        if cursor:
+            kwargs["start_cursor"] = cursor
+
+        response = notion_retry(client.data_sources.query)(data_source_id=ds_id, **kwargs)
+
+        for page in response["results"]:
+            title = _extract_page_title(page)
+            try:
+                content = extract_page_content(client, page["id"])
+            except Exception:
+                logger.warning("Failed to extract content from page %s", page["id"], exc_info=True)
+                content = ""
+
+            notion_cfg = config.notion
+            assert notion_cfg is not None
+            truncated = content[-notion_cfg.max_chars_per_entry:]
+            author = _extract_page_author(page) if db_name == "library" else ""
+            results.append(NotionEntry(
+                title=title,
+                source_db=db_name,
+                content=truncated,
+                last_edited=page.get("last_edited_time", ""),
+                created=page.get("created_time", ""),
+                author=author,
+            ))
+
+        if not response.get("has_more", False):
+            break
+        cursor = response.get("next_cursor")
+
+    return results
+
+
+def extract_page_content(client: NotionClient, page_id: str) -> str:
+    blocks = _fetch_all_blocks(client, page_id)
+    return _blocks_to_text(client, blocks)
+
+
 class NotionSource:
     def __init__(
         self,
@@ -140,7 +303,6 @@ class NotionSource:
         if allow_stale:
             return snapshot.content
 
-        from datetime import datetime, timedelta, timezone
         try:
             generated_at = datetime.fromisoformat(snapshot.generated_at.replace("Z", "+00:00"))
             age_hours = (datetime.now(timezone.utc) - generated_at).total_seconds() / 3600
@@ -150,6 +312,45 @@ class NotionSource:
             logger.warning("Invalid timestamp in cached context snapshot", exc_info=True)
 
         return ""
+
+    def _get_entries_from_mirror(self, config: Config) -> list[NotionEntry] | None:
+        if config.notion is None or not config.notion.mirror_path:
+            return None
+        from patronus.notion_mirror import NotionMirror
+        try:
+            mirror = NotionMirror(config.notion.mirror_path)
+        except Exception:
+            logger.warning("Failed to open Notion mirror at %s", config.notion.mirror_path, exc_info=True)
+            return None
+
+        with mirror:
+            if mirror.is_stale(config.notion.cache_ttl_hours):
+                logger.warning(
+                    "Notion mirror at %s is stale (>%dh), context may be outdated",
+                    config.notion.mirror_path,
+                    config.notion.cache_ttl_hours,
+                )
+
+            since = datetime.now(timezone.utc) - timedelta(days=config.notion.lookback_days)
+            pages = mirror.get_recent(since=since)
+
+            if len(pages) < config.notion.min_entries_threshold:
+                since_fallback = datetime.now(timezone.utc) - timedelta(days=config.notion.fallback_lookback_days)
+                pages = mirror.get_recent(since=since_fallback)
+
+            if len(pages) < config.notion.min_entries_threshold:
+                return []
+
+            return [
+                NotionEntry(
+                    title=p.title,
+                    source_db=p.source_db,
+                    content=p.content_snippet,
+                    last_edited=p.last_edited_at,
+                    created=p.created_at,
+                )
+                for p in pages
+            ]
 
     def get_context(self, config: Config, force_refresh: bool = False) -> str:
         if config.notion is None:
@@ -161,16 +362,27 @@ class NotionSource:
                 logger.info("Using cached Notion context (%d chars)", len(cached))
                 return cached
 
-        logger.info("Fetching fresh Notion context")
-        entries = self._fetch_all_entries(config, config.notion.lookback_days)
-
-        if len(entries) < config.notion.min_entries_threshold:
-            entries = self._fetch_all_entries(config, config.notion.fallback_lookback_days)
+        mirror_entries = self._get_entries_from_mirror(config)
+        if mirror_entries is not None:
+            entries = mirror_entries
+            source_label = "mirror"
+        else:
+            logger.info("Fetching fresh Notion context via API")
+            entries = fetch_notion_entries(
+                self._get_client(config), config, config.notion.lookback_days, self._data_source_ids
+            )
+            if len(entries) < config.notion.min_entries_threshold:
+                entries = fetch_notion_entries(
+                    self._get_client(config), config, config.notion.fallback_lookback_days, self._data_source_ids
+                )
+            source_label = "API"
 
         if len(entries) < config.notion.min_entries_threshold:
             logger.warning("Insufficient Notion entries (%d < %d), returning empty context",
                          len(entries), config.notion.min_entries_threshold)
             return ""
+
+        logger.info("Building Notion context from %s (%d entries)", source_label, len(entries))
 
         try:
             summary = self._summarize_entries(entries, config)
@@ -192,81 +404,9 @@ class NotionSource:
         return None
 
     def _fetch_all_entries(self, config: Config, lookback_days: int) -> list[NotionEntry]:
-        entries: list[NotionEntry] = []
-        for db_name, db_id in config.notion.database_ids.items():
-            try:
-                db_entries = self._query_database(config, db_id, db_name, lookback_days)
-                entries.extend(db_entries)
-            except Exception:
-                logger.warning("Failed to query Notion database %s", db_name, exc_info=True)
-        return entries
-
-    def _resolve_data_source_id(self, config: Config, db_id: str) -> str:
-        if db_id not in self._data_source_ids:
-            client = self._get_client(config)
-            response = client.databases.retrieve(database_id=db_id)
-            data_sources = response.get("data_sources", [])
-            if not data_sources:
-                raise ValueError(f"No data sources found for database {db_id}")
-            self._data_source_ids[db_id] = data_sources[0]["id"]
-        return self._data_source_ids[db_id]
-
-    def _query_database(
-        self,
-        config: Config,
-        db_id: str,
-        db_name: str,
-        lookback_days: int,
-    ) -> list[NotionEntry]:
-        client = self._get_client(config)
-        ds_id = self._resolve_data_source_id(config, db_id)
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
-
-        results: list[NotionEntry] = []
-        cursor: str | None = None
-
-        while True:
-            kwargs: dict = {
-                "filter": {
-                    "timestamp": "last_edited_time",
-                    "last_edited_time": {"after": cutoff},
-                },
-                "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
-            }
-            if cursor:
-                kwargs["start_cursor"] = cursor
-
-            response = client.data_sources.query(data_source_id=ds_id, **kwargs)
-
-            for page in response["results"]:
-                title = _extract_page_title(page)
-                try:
-                    content = self._extract_page_content(config, page["id"])
-                except Exception:
-                    logger.warning("Failed to extract content from page %s", page["id"], exc_info=True)
-                    content = ""
-
-                truncated = content[-config.notion.max_chars_per_entry:]
-                author = _extract_page_author(page) if db_name == "library" else ""
-                results.append(NotionEntry(
-                    title=title,
-                    source_db=db_name,
-                    content=truncated,
-                    last_edited=page.get("last_edited_time", ""),
-                    created=page.get("created_time", ""),
-                    author=author,
-                ))
-
-            if not response.get("has_more", False):
-                break
-            cursor = response.get("next_cursor")
-
-        return results
-
-    def _extract_page_content(self, config: Config, page_id: str) -> str:
-        client = self._get_client(config)
-        blocks = _fetch_all_blocks(client, page_id)
-        return _blocks_to_text(client, blocks)
+        return fetch_notion_entries(
+            self._get_client(config), config, lookback_days, self._data_source_ids
+        )
 
     def _summarize_entries(self, entries: list[NotionEntry], config: Config) -> str:
         prompt_parts: list[str] = []
@@ -306,7 +446,7 @@ def _fetch_all_blocks(client: NotionClient, block_id: str) -> list[dict]:
         if cursor:
             kwargs["start_cursor"] = cursor
 
-        response = client.blocks.children.list(**kwargs)
+        response = notion_retry(client.blocks.children.list)(**kwargs)
         all_blocks.extend(response["results"])
 
         if not response.get("has_more", False):
@@ -332,12 +472,16 @@ def _blocks_to_text(client: NotionClient, blocks: list[dict], depth: int = 0) ->
                     if child_text:
                         lines.append(child_text)
                 except Exception:
-                    logger.debug("Failed to fetch synced block %s", synced_from["block_id"])
+                    logger.warning(
+                        "Failed to fetch synced block %s", synced_from["block_id"], exc_info=True
+                    )
                 continue
 
         line = _block_to_line(block_type, data, depth)
         if line is not None:
             lines.append(line)
+        elif block_type not in ("column_list", "column", "table", "synced_block", ""):
+            logger.debug("Skipping block type %r (no text extraction)", block_type)
 
         if block.get("has_children"):
             try:
@@ -345,8 +489,20 @@ def _blocks_to_text(client: NotionClient, blocks: list[dict], depth: int = 0) ->
                 child_text = _blocks_to_text(client, child_blocks, depth + 1)
                 if child_text:
                     lines.append(child_text)
-            except Exception:
-                logger.debug("Failed to fetch children of block %s", block["id"])
+            except Exception as exc:
+                if block_type == "unsupported":
+                    logger.debug(
+                        "Cannot fetch children of unsupported block %s: %s",
+                        block.get("id", "?"),
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to fetch children of block %s (type=%r)",
+                        block.get("id", "?"),
+                        block_type,
+                        exc_info=True,
+                    )
 
     return "\n".join(lines)
 

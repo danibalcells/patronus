@@ -38,6 +38,32 @@ python scripts/poll_feeds.py
 
 Run via cron every 2 hours.
 
+### `sync_notion_mirror.py`
+Sync Notion databases to the local SQLite mirror with FTS5.
+
+```bash
+# Incremental sync (only pages changed since last sync per DB)
+python scripts/sync_notion_mirror.py
+
+# Full resync (ignore last sync timestamp, refetch all pages)
+python scripts/sync_notion_mirror.py --full
+
+# Generate and store embeddings for page content (off by default)
+python scripts/sync_notion_mirror.py --embed
+
+# Use a custom mirror path (default: notion.mirror_path from config, or notion_mirror.sqlite3)
+python scripts/sync_notion_mirror.py --mirror /path/to/custom_mirror.sqlite3
+```
+
+Run via cron nightly (before the daily digest) to keep the mirror fresh. Once `notion.mirror_path` is set in `config.yaml`, `NotionSource` will read from the mirror instead of the live Notion API at digest time — eliminating Notion API calls from the digest hot path.
+
+**Crontab example:**
+```
+0 2  * * * cd /path/to/patronus && .venv/bin/python scripts/sync_notion_mirror.py
+0 0  * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
+0 8  * * * cd /path/to/patronus && .venv/bin/python scripts/send_digest.py
+```
+
 ### `seed_feeds.py`
 One-off: Seed the database from a feeds file.
 

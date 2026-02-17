@@ -64,6 +64,7 @@ class NotionConfig:
     max_chars_per_entry: int = 3000
     summary_model: str = "google/gemini-2.5-flash-lite"
     cache_ttl_hours: int = 24
+    mirror_path: str = ""
 
 
 @dataclass

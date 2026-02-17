@@ -161,6 +161,7 @@ python scripts/send_digest.py [--db PATH] [--terminal-only] [--no-penalty] [--fo
 **Crontab:**
 ```
 0 */2 * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
+0 2  * * * cd /path/to/patronus && .venv/bin/python scripts/sync_notion_mirror.py
 0 8  * * * cd /path/to/patronus && .venv/bin/python scripts/send_digest.py
 ```
 
@@ -198,7 +199,8 @@ patronus/
 ├── summarize.py            # Unchanged (available for agent or Stage 1 fallback)
 ├── context.py              # NEW — PersonalizationSource protocol + context merging
 ├── interests.py            # Changed — implements PersonalizationSource
-├── notion.py               # NEW — implements PersonalizationSource (Notion API)
+├── notion.py               # NEW — implements PersonalizationSource (Notion API + mirror)
+├── notion_mirror.py        # NEW — local SQLite mirror of Notion pages with FTS5
 ├── agent.py                # NEW — LLM editor: plan sections, call tools, assemble
 ├── digest.py               # Changed — section-based Digest model, two pipeline paths
 ├── pipeline.py             # NEW — top-level orchestrator
@@ -219,6 +221,7 @@ scripts/
 ├── send_digest.py          # Uses pipeline.DigestPipeline
 ├── seed_feeds.py           # Unchanged
 ├── run_bot.py              # Runs bot.py
+├── sync_notion_mirror.py   # NEW — sync Notion DBs to local SQLite mirror
 └── test_notion.py          # Manual test: fetch Notion context and print
 
 config/
@@ -239,7 +242,8 @@ config/
 | `summarize.py` | Unchanged | Per-item summaries (used by Stage 1 fallback path) |
 | `context.py` | ✅ **New** | `PersonalizationSource` protocol, `Context` dataclass, `merge_sources()` |
 | `interests.py` | ✅ Changed | `InterestsSource` class implements `PersonalizationSource`; `load_interest_vectors()` preserved |
-| `notion.py` | ✅ **New** | `NotionSource` implements `PersonalizationSource` — pulls from 5 Notion DBs, extracts text blocks (including synced blocks), summarizes via LLM, caches to DB |
+| `notion.py` | ✅ **New** | `NotionSource` implements `PersonalizationSource` — pulls from Notion DBs via API or local mirror, summarizes via LLM, caches to DB. Module-level fetch helpers (`fetch_notion_entries`, `query_notion_database`, `extract_page_content`, `resolve_data_source_id`) shared with sync script |
+| `notion_mirror.py` | ✅ **New** | Local SQLite mirror of Notion pages. `NotionMirror` class: `pages` table (id, title, content, source_db, url, created/edited timestamps, optional embedding blob) + FTS5 virtual table for BM25 full-text search + `sync_meta` table for per-DB incremental sync tracking. Exposes `search(query, limit, source_dbs)` and `get_recent(source_dbs, since, limit)`. |
 | `agent.py` | ✅ **New** | LLM editor agent: receives context, calls tools via `submit_digest`, returns structured `Digest` |
 | `digest.py` | ✅ Changed | `SectionType` enum, `DigestSection` model; `generate_digest` dispatches to agent or Stage 1 path |
 | `pipeline.py` | ✅ **New** | `DigestPipeline` orchestrator — wires sources, tools, agent, and outputs |
@@ -292,7 +296,9 @@ class Tool(ABC):
 
 **`interests.py`** ✅ (changed) — `InterestsSource` class implements `PersonalizationSource`. `get_context()` returns topic descriptions as prose. `get_interest_vectors()` returns the embedded vectors via the existing `load_interest_vectors()` function, which is preserved for backward compatibility.
 
-**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. Queries 5 Notion databases (Journal, Work Diary, Notes, Library highlights, Reviews) filtered by `last_edited_time`. Extracts text from all block types (paragraphs, headings, lists, toggles, checkboxes, quotes, callouts, code, equations, bookmarks, table rows) including synced blocks (transparently resolves both original and reference synced blocks). Sends all extracted content in a single LLM call (via `llm.complete()`) with a summarization prompt targeting ~5k tokens of output. Fallback logic: if fewer than `min_entries_threshold` entries found in the configured lookback window, expands to `fallback_lookback_days`; if still below threshold, returns empty string. Caches generated summaries to a `ContextSnapshot` table via the DB with a configurable TTL (`cache_ttl_hours`, default 24 hours). By default, uses cached context if available and fresh (age < TTL). Accepts a `force_refresh` parameter to bypass cache and fetch fresh data. On LLM failure with stale cache available, falls back to stale cache rather than failing completely.
+**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. When `notion.mirror_path` is configured and the mirror file exists, reads pages from the local mirror via `get_recent()` (with staleness warning if mirror is >24h old). Falls back to live Notion API if no mirror is configured. In both paths: applies lookback + fallback_lookback window, sends content to an LLM summarizer, and caches the resulting summary to `ContextSnapshot` with a configurable TTL. Module-level helpers (`fetch_notion_entries`, `query_notion_database`, `extract_page_content`, `resolve_data_source_id`) are used by both `NotionSource` and `scripts/sync_notion_mirror.py`.
+
+**`notion_mirror.py`** ✅ **New** — `NotionMirror` class: local SQLite mirror with a `pages` table (id, title, content, source_db, url, created/edited timestamps, optional embedding blob), an FTS5 virtual table (`pages_fts`) over title+content for BM25 full-text search, and a `sync_meta` table for per-DB incremental sync tracking. `search(query, limit, source_dbs)` returns BM25-ranked results; `get_recent(source_dbs, since, limit)` returns pages ordered by `last_edited_at`. Both return `list[MirrorPage]` with a `content_snippet` field (first 300 chars of content). `is_stale(max_age_hours)` checks the most recent `last_synced_at` across all DBs. `open_mirror(path)` creates parent directories as needed.
 
 **`agent.py`** ✅ — The LLM editor agent. `plan_and_assemble(config, context, tool_registry)` runs the agent loop: sends the personalization context and an editorial system prompt, lets the agent call retrieval tools via `llm.complete_with_tools()`, and collects structured output via a `submit_digest` tool that the agent calls to deliver the final `Digest` with typed sections. The agent decides which sections to include, how many items each gets, and writes summaries as part of assembly. The loop is capped at `max_iterations` (configurable) to prevent runaway API calls.
 
@@ -380,7 +386,8 @@ llm              ← config
 embed            ← config, llm
 rank             ← config, db
 interests        ← config, embed, context
-notion           ← config, llm, context
+notion_mirror    ← (no internal deps — pure sqlite3)
+notion           ← config, llm, context, notion_mirror
 summarize        ← config, llm
 context          ← (no internal deps — defines protocol + dataclass)
 tools/*          ← config, db, embed, rank
@@ -428,6 +435,7 @@ notion:
   max_chars_per_entry: 3000
   summary_model: "google/gemini-2.5-flash-lite"
   cache_ttl_hours: 24
+  mirror_path: "notion_mirror.sqlite3"   # path to local mirror DB; empty = API only
 
 outputs:
   - type: telegram
@@ -458,6 +466,7 @@ NOTION_TOKEN=secret_...
 - **Notion as optional.** If Notion is unavailable, the pipeline degrades to static interests — fewer personalization sources, not a failure. The `PersonalizationSource` protocol makes this natural: the pipeline merges whatever sources are available.
 - **Provider-agnostic tool use, not a framework.** `llm.py` exposes a common `complete_with_tools()` interface with `ToolCall` and `LLMResponse` types. The agent works with these abstractions — swapping the agent model from Claude to Gemini or GPT is a config change. LangChain/LangGraph would add abstraction without value for a single-purpose agent with a fixed set of tools.
 - **Notion context caching.** Fetching and summarizing Notion content is expensive (multiple API calls + LLM summarization). The system caches Notion context summaries in the DB with a configurable TTL (default 24 hours via `cache_ttl_hours`). By default, the digest uses cached context if available and fresh. The cache can be bypassed with `--force-notion-refresh` flag in `scripts/send_digest.py`. On LLM failure, the system falls back to stale cache if available rather than failing completely. This improves reliability and reduces API costs during development and testing.
+- **Local Notion mirror for context and search.** `notion_mirror.py` maintains a local SQLite copy of all Notion pages with an FTS5 index for BM25 full-text search. When `notion.mirror_path` is set, `NotionSource` reads from the mirror instead of the live API — eliminating Notion API calls from the digest hot path. The mirror is synced nightly via `scripts/sync_notion_mirror.py` (incremental by default, `--full` for complete resync). Embeddings are opt-in at sync time (`--embed` flag). If the mirror is stale (>24h), a warning is logged but the stale mirror is still used; the summary cache sits on top as before, so a fresh summary can still be served within the TTL even if the mirror pages are slightly dated.
 
 ## Development
 
