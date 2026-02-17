@@ -237,6 +237,7 @@ def plan_and_assemble(
             logger.info("Executing tool: %s(%s)", tc.name, json.dumps(tc.input, default=str)[:200])
             result = tool_registry.execute(tc.name, **tc.input)
             results[tc.id] = result.to_text()
+            logger.debug("Tool result: %s", result.to_text()[:600])
 
         messages.append(build_assistant_message_from_response(response))
         messages.append(build_tool_result_message(response.tool_calls, results))

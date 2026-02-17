@@ -18,13 +18,13 @@ from patronus.tools.local import register_local_tools
 logger = logging.getLogger(__name__)
 
 
-def _build_default_sources(config: Config) -> list[PersonalizationSource]:
+def _build_default_sources(config: Config, db: Database) -> list[PersonalizationSource]:
     sources: list[PersonalizationSource] = [InterestsSource()]
 
     if config.notion and config.notion_token:
         try:
             from patronus.notion import NotionSource
-            sources.append(NotionSource())
+            sources.append(NotionSource(db=db))
         except Exception:
             logger.warning("Failed to initialize NotionSource, skipping", exc_info=True)
 
@@ -48,7 +48,7 @@ class DigestPipeline:
     ) -> None:
         self._config = config
         self._db = db
-        self._sources = sources if sources is not None else _build_default_sources(config)
+        self._sources = sources if sources is not None else _build_default_sources(config, db)
         self._outputs = outputs if outputs is not None else []
 
     def generate(self) -> Digest:
