@@ -84,6 +84,26 @@ def llm_generation(
 
 
 @contextmanager
+def planning_generation(
+    name: str,
+    model: str,
+    input: Any,
+) -> Generator[_NoopObs | Any, None, None]:
+    lf = _get_langfuse()
+    if lf is None:
+        yield _NoopObs()
+        return
+    with lf.start_as_current_observation(
+        name=name,
+        as_type="generation",
+        model=model,
+        input=input,
+        metadata={"phase": "planning"},
+    ) as obs:
+        yield obs
+
+
+@contextmanager
 def tool_call(
     name: str,
     input: dict[str, Any],

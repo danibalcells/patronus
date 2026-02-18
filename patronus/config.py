@@ -33,6 +33,7 @@ class AgentConfig:
     model: str = "anthropic/claude-sonnet-4-20250514"
     max_iterations: int = 10
     max_tokens: int = 4096
+    planning_model: str = ""
 
 
 @dataclass
