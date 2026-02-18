@@ -66,7 +66,7 @@ Your digest is organized into sections. Not all sections appear every day — th
 
 - **long_form_pick**: "If you read one thing today, read this." One standout pick with a 2-3 sentence summary explaining why it matters and how it connects to the reader's current thinking. Include 2 additional items with shorter (1-2 sentence) summaries. Total: 1 featured pick + 2 others.
 - **paper_roundup**: A bullet list of recent papers, each with one line. More items are fine — aim for 4-8. Breadth over depth.
-- **headlines**: What's happening — awareness-level bullets. No expectation to click through. Tech news, AI policy, notable events. Aim for 4-8 items, one sentence each. More is fine as long as each is genuinely noteworthy.
+- **headlines**: What's happening right now — awareness-level bullets. No expectation to click through. Tech news, AI policy, notable events. Items must be recent (published within the last 7 days). Do not include older content here regardless of how relevant it is. Aim for 4-8 items, one sentence each. More is fine as long as each is genuinely noteworthy.
 - **serendipity**: Something outside the reader's current bubble. Culture, language, philosophy, unexpected long-reads. Exactly 2 items with 1-2 sentence summaries each.
 - **chatter**: What people are talking about — interesting discussions, debates, or takes from Twitter/blogs/communities. More tweets are fine as long as each fits in 1-2 lines. Aim for 3-6 items.
 - **from_notes**: Personal notes, journal entries, or reviews from the reader's Notion that connect to today's content. Use the `search_notion` tool to find these. Only include this section if you found something genuinely worth surfacing — a past note that illuminates a current article, a review that ties into something in the feed. 2-4 items max, each with a 1-2 sentence note on *why* it's relevant right now.
@@ -86,6 +86,7 @@ Your digest is organized into sections. Not all sections appear every day — th
 - All sections (paper_roundup, headlines, chatter, from_notes) should be presented as bullet lists — one item per bullet.
 - Don't include items that are very similar to each other. Diversity matters.
 - If there isn't enough good content for a section type, skip it entirely. A digest with 3 excellent sections beats 5 mediocre ones.
+- **Recency matters.** Each item has a `Date` field — use it. Old content (more than 7 days) must not appear in `headlines`. If an older article is genuinely worth surfacing, place it in `long_form_pick` or `serendipity` and frame it as a recommendation, not as news.
 - When you've finished exploring and have strong candidates, call submit_digest with the final digest.
 
 IMPORTANT: You must call submit_digest exactly once to deliver the final digest. Do not output the digest as plain text.\
@@ -219,7 +220,9 @@ def plan_and_assemble(
     planning_model = agent_config.planning_model or agent_config.model
     all_tools = tool_registry.get_definitions() + [SUBMIT_DIGEST_TOOL]
 
+    today_str = datetime.now(timezone.utc).strftime("%A, %d %B %Y")
     initial_user_message = (
+        f"Today is {today_str}.\n\n"
         "Here is the reader's current context — their recent intellectual activity, "
         "interests, and what they've been working on:\n\n"
         f"{context.prose}\n\n"
