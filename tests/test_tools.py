@@ -374,18 +374,350 @@ class TestSearchBySource:
         db.close()
 
 
-class TestSearchArxiv:
-    def test_returns_not_implemented(self) -> None:
-        tool = SearchArxiv()
-        result = tool.execute(query="transformer attention")
-        assert "not yet implemented" in result.message.lower()
-        assert len(result.items) == 0
+def _make_fake_feed(entries: list[dict]) -> object:
+    class FakeEntry:
+        def __init__(self, data: dict) -> None:
+            self.id = data.get("id", "")
+            self.title = data.get("title", "")
+            self.summary = data.get("summary", "")
+            self.published = data.get("published", "")
+            self.authors = [type("A", (), {"name": n})() for n in data.get("authors", [])]
+            self.tags = [{"term": t} for t in data.get("tags", [])]
 
-    def test_tool_metadata(self) -> None:
-        tool = SearchArxiv()
+    class FakeFeed:
+        def __init__(self, entries_data: list[dict]) -> None:
+            self.entries = [FakeEntry(e) for e in entries_data]
+
+    return FakeFeed(entries)
+
+
+FAKE_ENTRIES = [
+    {
+        "id": "http://arxiv.org/abs/2301.00001v2",
+        "title": "Attention Is All You Need",
+        "summary": "We propose the Transformer, a model based solely on attention mechanisms.",
+        "published": "2023-01-15T00:00:00Z",
+        "authors": ["Vaswani, A.", "Shazeer, N."],
+        "tags": ["cs.LG", "cs.AI"],
+    },
+    {
+        "id": "http://arxiv.org/abs/2301.00002v1",
+        "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+        "summary": "We introduce BERT for language representation pre-training.",
+        "published": "2023-01-16T00:00:00Z",
+        "authors": ["Devlin, J."],
+        "tags": ["cs.CL"],
+    },
+]
+
+
+class TestSearchArxiv:
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_returns_results(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES)
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="transformer attention")
+
+        assert len(result.items) == 2
+        assert result.items[0]["title"] == "Attention Is All You Need"
+        assert result.items[0]["url"] == "https://arxiv.org/abs/2301.00001"
+        assert "Vaswani" in result.items[0]["author"]
+        assert result.items[0]["item_type"] == "paper"
+        assert result.items[0]["source"] == "arxiv"
+        assert "transformer" in result.items[0]["snippet"].lower()
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_ingests_new_papers_into_db(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="attention")
+
+        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
+        assert ingested is not None
+        assert ingested.source_type == "arxiv_search"
+        assert ingested.item_type == "paper"
+        assert ingested.title == "Attention Is All You Need"
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_deduplicates_already_ingested_papers(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
+
+        tool = SearchArxiv(config, db)
+        result1 = tool.execute(query="attention")
+        result2 = tool.execute(query="attention")
+
+        assert len(result1.items) == 1
+        assert len(result2.items) == 1
+        assert "1 newly ingested" in result1.message
+        assert "0 newly ingested" in result2.message
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_no_embedding_by_default(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
+
+        with patch("patronus.tools.arxiv.embed_text") as mock_embed:
+            tool = SearchArxiv(config, db)
+            tool.execute(query="attention")
+            mock_embed.assert_not_called()
+
+        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
+        assert ingested is not None
+        assert ingested.embedding is None
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_embeds_when_flag_enabled(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
+
+        fake_embedding = np.ones(4, dtype=np.float32)
+        with patch("patronus.tools.arxiv.embed_text", return_value=fake_embedding):
+            tool = SearchArxiv(config, db, embed=True)
+            tool.execute(query="attention")
+
+        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
+        assert ingested is not None
+        assert ingested.embedding is not None
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_empty_query_returns_error(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="")
+        assert "required" in result.message.lower()
+        mock_parse.assert_not_called()
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_no_results_returns_message(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="zzznoresults")
+
+        assert len(result.items) == 0
+        assert "no" in result.message.lower()
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_api_failure_returns_error(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.side_effect = OSError("connection refused")
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="attention")
+
+        assert len(result.items) == 0
+        assert "failed" in result.message.lower()
+        db.close()
+
+    @patch("patronus.tools.arxiv.time.sleep")
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_rate_limit_retries_once_then_fails(self, mock_parse: MagicMock, mock_sleep: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+
+        class RateLimitedFeed:
+            status = 429
+            entries: list = []
+            bozo = False
+
+        mock_parse.return_value = RateLimitedFeed()
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="attention")
+
+        assert mock_parse.call_count == 2
+        mock_sleep.assert_called_once()
+        assert "rate limit" in result.message.lower()
+        assert result.items == []
+        db.close()
+
+    @patch("patronus.tools.arxiv.time.sleep")
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_rate_limit_succeeds_on_retry(self, mock_parse: MagicMock, mock_sleep: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+
+        class RateLimitedFeed:
+            status = 429
+            entries: list = []
+            bozo = False
+
+        mock_parse.side_effect = [RateLimitedFeed(), _make_fake_feed(FAKE_ENTRIES[:1])]
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="attention")
+
+        assert mock_parse.call_count == 2
+        mock_sleep.assert_called_once()
+        assert len(result.items) == 1
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_strips_version_from_url(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([{
+            "id": "http://arxiv.org/abs/2301.99999v3",
+            "title": "Test Paper",
+            "summary": "Abstract text.",
+            "published": "2023-01-01T00:00:00Z",
+            "authors": [],
+            "tags": [],
+        }])
+
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="test")
+
+        assert result.items[0]["url"] == "https://arxiv.org/abs/2301.99999"
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_sort_by_recency_sets_sortby_param(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="attention", sort_by="recency")
+
+        call_url = mock_parse.call_args[0][0]
+        assert "sortBy=submittedDate" in call_url
+        assert "sortOrder=descending" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_sort_by_relevance_is_default(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="attention")
+
+        call_url = mock_parse.call_args[0][0]
+        assert "sortBy=relevance" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_category_filter_included_in_query(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="attention", category="cs.LG")
+
+        call_url = mock_parse.call_args[0][0]
+        assert "cat:cs.LG" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_multiword_query_ands_each_term(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="reward hacking")
+
+        call_url = mock_parse.call_args[0][0]
+        assert "all:reward" in call_url
+        assert "all:hacking" in call_url
+        assert "AND" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_single_word_query_uses_all_prefix(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="transformers")
+
+        call_url = mock_parse.call_args[0][0]
+        assert "all:transformers" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_days_filter_included_in_query(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        mock_parse.return_value = _make_fake_feed([])
+
+        tool = SearchArxiv(config, db)
+        tool.execute(query="attention", days=7)
+
+        call_url = mock_parse.call_args[0][0]
+        assert "submittedDate" in call_url
+        db.close()
+
+    @patch("patronus.tools.arxiv.feedparser.parse")
+    def test_journal_ref_included_when_present(self, mock_parse: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        entry_with_journal = {
+            **FAKE_ENTRIES[0],
+            "journal_ref": "NeurIPS 2023",
+        }
+
+        class FakeEntryWithJournal:
+            def __init__(self) -> None:
+                self.id = entry_with_journal["id"]
+                self.title = entry_with_journal["title"]
+                self.summary = entry_with_journal["summary"]
+                self.published = entry_with_journal["published"]
+                self.authors = [type("A", (), {"name": n})() for n in entry_with_journal["authors"]]
+                self.tags = [{"term": t} for t in entry_with_journal["tags"]]
+                self.arxiv_journal_ref = entry_with_journal["journal_ref"]
+
+        class FakeFeedWithJournal:
+            entries = [FakeEntryWithJournal()]
+
+        mock_parse.return_value = FakeFeedWithJournal()
+        tool = SearchArxiv(config, db)
+        result = tool.execute(query="attention")
+
+        assert len(result.items) == 1
+        assert result.items[0].get("journal_ref") == "NeurIPS 2023"
+        db.close()
+
+    def test_tool_metadata(self, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+        tool = SearchArxiv(config, db)
         assert tool.name == "search_arxiv"
         defn = tool.to_definition()
-        assert "query" in defn["input_schema"]["properties"]
+        props = defn["input_schema"]["properties"]
+        assert "query" in props
+        assert "n" in props
+        assert "sort_by" in props
+        assert "category" in props
+        assert "days" in props
+        assert "not yet implemented" not in tool.description
+        assert "citation" in tool.description.lower()
+        db.close()
 
 
 class TestRegisterLocalTools:

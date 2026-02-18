@@ -33,7 +33,7 @@ def _build_default_sources(config: Config, db: Database) -> list[Personalization
 def _build_tool_registry(config: Config, db: Database) -> ToolRegistry:
     registry = ToolRegistry()
     register_local_tools(registry, config, db)
-    register_arxiv_tools(registry)
+    register_arxiv_tools(registry, config, db)
     register_notion_tools(registry, config)
     return registry
 
