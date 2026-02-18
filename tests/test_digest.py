@@ -243,7 +243,7 @@ class TestDigestDataclass:
 
 class TestSectionType:
     def test_all_values(self) -> None:
-        expected = {"long_form_pick", "paper_roundup", "headlines", "serendipity", "chatter"}
+        expected = {"long_form_pick", "paper_roundup", "headlines", "serendipity", "chatter", "from_notes"}
         assert {st.value for st in SectionType} == expected
 
     def test_string_enum(self) -> None:

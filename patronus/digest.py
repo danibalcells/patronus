@@ -21,6 +21,7 @@ class SectionType(str, Enum):
     HEADLINES = "headlines"
     SERENDIPITY = "serendipity"
     CHATTER = "chatter"
+    FROM_NOTES = "from_notes"
 
 
 @dataclass

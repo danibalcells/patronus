@@ -14,6 +14,7 @@ from patronus.output.terminal import TerminalOutput
 from patronus.tools import ToolRegistry
 from patronus.tools.arxiv import register_arxiv_tools
 from patronus.tools.local import register_local_tools
+from patronus.tools.notion import register_notion_tools
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ def _build_tool_registry(config: Config, db: Database) -> ToolRegistry:
     registry = ToolRegistry()
     register_local_tools(registry, config, db)
     register_arxiv_tools(registry)
+    register_notion_tools(registry, config)
     return registry
 
 

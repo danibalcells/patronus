@@ -73,17 +73,21 @@ def _make_agent_digest() -> Digest:
 
 
 class TestBuildDefaultSources:
-    def test_always_includes_interests(self) -> None:
+    def test_always_includes_interests(self, tmp_path: object) -> None:
         config = _make_config()
-        sources = _build_default_sources(config)
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        sources = _build_default_sources(config, db)
         from patronus.interests import InterestsSource
         assert any(isinstance(s, InterestsSource) for s in sources)
+        db.close()
 
-    def test_no_notion_without_config(self) -> None:
+    def test_no_notion_without_config(self, tmp_path: object) -> None:
         config = _make_config()
         config.notion = None
-        sources = _build_default_sources(config)
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        sources = _build_default_sources(config, db)
         assert len(sources) == 1
+        db.close()
 
 
 class TestBuildToolRegistry:

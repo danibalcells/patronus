@@ -14,6 +14,7 @@ _SECTION_EMOJI = {
     SectionType.HEADLINES: "\U0001f4f0",
     SectionType.SERENDIPITY: "\U0001f52e",
     SectionType.CHATTER: "\U0001f4ac",
+    SectionType.FROM_NOTES: "\U0001f4d3",
 }
 
 _SEPARATOR = "\u2500" * 60

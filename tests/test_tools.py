@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -10,12 +11,14 @@ from patronus.config import (
     Config,
     DigestConfig,
     EmbeddingConfig,
+    NotionConfig,
     PollingConfig,
     SummarizationConfig,
     TelegramConfig,
     TopicConfig,
 )
 from patronus.db import Database, Item, serialize_embedding
+from patronus.notion_mirror import NotionMirror
 from patronus.tools import ToolRegistry
 from patronus.tools.arxiv import SearchArxiv
 from patronus.tools.base import Tool, ToolResult
@@ -26,6 +29,7 @@ from patronus.tools.local import (
     SearchSimilar,
     register_local_tools,
 )
+from patronus.tools.notion import SearchNotion, register_notion_tools
 
 
 def _unit_vec(*values: float) -> np.ndarray:
@@ -395,3 +399,236 @@ class TestRegisterLocalTools:
             "search_similar", "search_recent", "search_by_topic", "search_by_source",
         }
         db.close()
+
+
+def _make_notion_config(mirror_path: str = "", database_ids: dict | None = None) -> Config:
+    return Config(
+        digest=DigestConfig(),
+        polling=PollingConfig(),
+        embedding=EmbeddingConfig(),
+        summarization=SummarizationConfig(),
+        telegram=TelegramConfig(),
+        topics={},
+        notion=NotionConfig(
+            database_ids=database_ids or {
+                "journal": "uuid-journal",
+                "notes": "uuid-notes",
+                "reviews": "uuid-reviews",
+            },
+            mirror_path=mirror_path,
+        ),
+    )
+
+
+def _insert_notion_page(
+    mirror: NotionMirror,
+    *,
+    page_id: str = "page1",
+    title: str = "Test Page",
+    content: str = "Some content",
+    source_db: str = "uuid-journal",
+    url: str = "https://notion.so/page1",
+    last_edited_at: str = "2026-02-10T00:00:00Z",
+) -> None:
+    mirror.upsert_page(
+        page_id=page_id,
+        title=title,
+        content=content,
+        source_db=source_db,
+        url=url,
+        created_at="2026-01-01T00:00:00Z",
+        last_edited_at=last_edited_at,
+    )
+
+
+class TestSearchNotion:
+    def test_tool_metadata(self, tmp_path: Path) -> None:
+        config = _make_notion_config(mirror_path=str(tmp_path / "mirror.sqlite3"))
+        tool = SearchNotion(config)
+        assert tool.name == "search_notion"
+        assert "notion" in tool.description.lower()
+        schema = tool.to_definition()
+        assert "query" in schema["input_schema"]["properties"]
+        assert "n" in schema["input_schema"]["properties"]
+
+    def test_missing_mirror_returns_error(self, tmp_path: Path) -> None:
+        config = _make_notion_config(mirror_path=str(tmp_path / "nonexistent.sqlite3"))
+        tool = SearchNotion(config)
+        result = tool.execute(query="machine learning")
+        assert "not found" in result.message.lower()
+        assert result.items == []
+
+    def test_empty_query_returns_error(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path):
+            pass
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="")
+        assert "required" in result.message.lower()
+        assert result.items == []
+
+    def test_returns_matching_results(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(
+                mirror,
+                page_id="p1",
+                title="Mechanistic Interpretability",
+                content="circuits and features in neural networks",
+                source_db="uuid-journal",
+                url="https://notion.so/p1",
+            )
+            _insert_notion_page(
+                mirror,
+                page_id="p2",
+                title="Cooking Pasta",
+                content="boil the water add salt",
+                source_db="uuid-notes",
+                url="https://notion.so/p2",
+            )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="neural networks circuits")
+
+        assert len(result.items) == 1
+        item = result.items[0]
+        assert item["title"] == "Mechanistic Interpretability"
+        assert item["url"] == "https://notion.so/p1"
+        assert "snippet" in item
+
+    def test_item_id_prefixed_with_notion(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(mirror, page_id="abc123", content="interpretability research")
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="interpretability")
+
+        assert len(result.items) == 1
+        assert result.items[0]["id"] == "notion:abc123"
+
+    def test_source_db_uuid_mapped_to_readable_name(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(
+                mirror,
+                page_id="p1",
+                content="alignment and safety",
+                source_db="uuid-notes",
+            )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="alignment")
+
+        assert len(result.items) == 1
+        assert "notes" in result.items[0]["source"]
+
+    def test_unknown_source_db_falls_back_to_uuid(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(
+                mirror,
+                page_id="p1",
+                content="some content about philosophy",
+                source_db="unknown-uuid-xyz",
+            )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="philosophy")
+
+        assert len(result.items) == 1
+        assert "unknown-uuid-xyz" in result.items[0]["source"]
+
+    def test_respects_n_param(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            for i in range(5):
+                _insert_notion_page(
+                    mirror,
+                    page_id=f"p{i}",
+                    title=f"Note {i}",
+                    content="transformer attention mechanism",
+                    source_db="uuid-journal",
+                    url=f"https://notion.so/p{i}",
+                )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="transformer attention", n=3)
+
+        assert len(result.items) <= 3
+
+    def test_no_matches_returns_message(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(mirror, page_id="p1", title="Pasta Recipe", content="boil water")
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="zzznomatch")
+
+        assert result.items == []
+        assert "no" in result.message.lower()
+
+    def test_result_includes_timestamp(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(
+                mirror,
+                page_id="p1",
+                content="mechanistic interpretability features",
+                last_edited_at="2026-02-10T12:00:00Z",
+            )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="interpretability")
+
+        assert len(result.items) == 1
+        assert result.items[0]["timestamp"] == "2026-02-10T12:00:00Z"
+
+    def test_to_text_includes_key_fields(self, tmp_path: Path) -> None:
+        mirror_path = str(tmp_path / "mirror.sqlite3")
+        with NotionMirror(mirror_path) as mirror:
+            _insert_notion_page(
+                mirror,
+                page_id="p1",
+                title="AI Safety Notes",
+                content="deceptive alignment and corrigibility",
+                url="https://notion.so/p1",
+                source_db="uuid-journal",
+            )
+
+        config = _make_notion_config(mirror_path=mirror_path)
+        tool = SearchNotion(config)
+        result = tool.execute(query="deceptive alignment")
+        text = result.to_text()
+
+        assert "AI Safety Notes" in text
+        assert "https://notion.so/p1" in text
+        assert "journal" in text
+
+
+class TestRegisterNotionTools:
+    def test_registers_tool_when_mirror_path_set(self, tmp_path: Path) -> None:
+        config = _make_notion_config(mirror_path=str(tmp_path / "mirror.sqlite3"))
+        registry = ToolRegistry()
+        register_notion_tools(registry, config)
+        assert "search_notion" in registry.tool_names
+
+    def test_does_not_register_when_mirror_path_empty(self) -> None:
+        config = _make_notion_config(mirror_path="")
+        registry = ToolRegistry()
+        register_notion_tools(registry, config)
+        assert "search_notion" not in registry.tool_names
+
+    def test_does_not_register_when_no_notion_config(self) -> None:
+        config = _make_config()
+        registry = ToolRegistry()
+        register_notion_tools(registry, config)
+        assert "search_notion" not in registry.tool_names

@@ -46,6 +46,7 @@ def _section_emoji(section_type: SectionType) -> str:
         SectionType.HEADLINES: "\U0001f4f0",
         SectionType.SERENDIPITY: "\U0001f52e",
         SectionType.CHATTER: "\U0001f4ac",
+        SectionType.FROM_NOTES: "\U0001f4d3",
     }.get(section_type, "")
 
 
