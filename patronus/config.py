@@ -83,6 +83,7 @@ class Config:
     telegram_bot_token: str = ""
     notion_token: str = ""
     google_api_key: str = ""
+    openalex_api_key: str = ""
 
 
 def load_config(
@@ -130,4 +131,5 @@ def load_config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         notion_token=os.getenv("NOTION_TOKEN", ""),
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
+        openalex_api_key=os.getenv("OPENALEX_API_KEY", ""),
     )
