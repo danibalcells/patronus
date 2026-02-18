@@ -30,7 +30,7 @@ from patronus.tools.local import (
     register_local_tools,
 )
 from patronus.tools.notion import SearchNotion, register_notion_tools
-from patronus.tools.openalex import SearchOpenAlex, register_openalex_tools
+from patronus.tools.openalex import GetCitingPapers, GetReferencedPapers, SearchOpenAlex, register_openalex_tools
 
 
 def _unit_vec(*values: float) -> np.ndarray:
@@ -1266,6 +1266,253 @@ class TestSearchOpenAlex:
         db.close()
 
 
+class TestGetCitingPapers:
+    @patch("patronus.tools.openalex.Works")
+    def test_returns_citing_papers(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        mock_chain = _make_mock_works_chain(FAKE_OPENALEX_WORKS)
+        MockWorks.return_value = mock_chain
+
+        tool = GetCitingPapers(config, db)
+        result = tool.execute(doi_or_id="W2741809807")
+
+        mock_chain.filter.assert_called_once_with(cites="W2741809807")
+        assert len(result.items) == 2
+        assert result.items[0]["source"] == "openalex"
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_resolves_bare_doi_to_openalex_id(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        # First call: Works()["https://doi.org/10.1234/foo"] → returns work with id
+        mock_lookup = MagicMock()
+        mock_lookup.get.return_value = {"id": "https://openalex.org/W9999999"}
+        mock_lookup.__getitem__ = MagicMock(return_value={"id": "https://openalex.org/W9999999"})
+        mock_chain = _make_mock_works_chain([])
+        MockWorks.return_value = mock_lookup
+        # Second call (filter chain) needs to return the mock_chain behaviour
+        mock_lookup.filter.return_value = mock_chain
+        mock_chain.sort.return_value = mock_chain
+        mock_chain.get.return_value = []
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="10.1234/foo")
+
+        mock_lookup.filter.assert_called_once_with(cites="W9999999")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_openalex_id_passed_through_without_lookup(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain([])
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="W2741809807")
+
+        mock_chain = MockWorks.return_value
+        # W... IDs go straight to filter without a lookup call
+        mock_chain.filter.assert_called_once_with(cites="W2741809807")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_default_sort_is_recency(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain([])
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="W2741809807")
+
+        mock_chain = MockWorks.return_value
+        mock_chain.sort.assert_called_once_with(publication_date="desc")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_sort_by_citations(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain([])
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="W2741809807", sort_by="citations")
+
+        mock_chain = MockWorks.return_value
+        mock_chain.sort.assert_called_once_with(cited_by_count="desc")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_ingests_with_openalex_citing_source_type(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="W2741809807")
+
+        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
+        assert ingested is not None
+        assert ingested.source_type == "openalex_citing"
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_empty_id_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+
+        tool = GetCitingPapers(config, db)
+        result = tool.execute(doi_or_id="")
+
+        assert "required" in result.message.lower()
+        MockWorks.assert_not_called()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_no_results_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain([])
+
+        tool = GetCitingPapers(config, db)
+        result = tool.execute(doi_or_id="W9999999")
+
+        assert len(result.items) == 0
+        assert "no" in result.message.lower()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_api_failure_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.side_effect = OSError("connection refused")
+
+        tool = GetCitingPapers(config, db)
+        result = tool.execute(doi_or_id="W2741809807")
+
+        assert "failed" in result.message.lower()
+        db.close()
+
+
+class TestGetReferencedPapers:
+    def _make_mock_works(self, ref_ids: list[str], fetch_results: list) -> MagicMock:
+        """Single Works() instance mock that handles both the lookup and filter calls."""
+        mock = MagicMock()
+        mock.__getitem__.return_value = {"referenced_works": ref_ids}
+        mock_chain = _make_mock_works_chain(fetch_results)
+        mock.filter.return_value = mock_chain
+        return mock
+
+    @patch("patronus.tools.openalex.Works")
+    def test_returns_referenced_papers(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        ref_ids = ["https://openalex.org/W1111111111", "https://openalex.org/W2222222222"]
+        MockWorks.return_value = self._make_mock_works(ref_ids, FAKE_OPENALEX_WORKS)
+
+        tool = GetReferencedPapers(config, db)
+        result = tool.execute(doi_or_id="W9999999")
+
+        assert len(result.items) == 2
+        assert result.items[0]["source"] == "openalex"
+        assert "2 total in bibliography" in result.message
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_fetches_by_id_list(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        ref_ids = ["https://openalex.org/W1111111111", "https://openalex.org/W2222222222"]
+        mock = self._make_mock_works(ref_ids, [])
+        MockWorks.return_value = mock
+
+        tool = GetReferencedPapers(config, db)
+        tool.execute(doi_or_id="W9999999")
+
+        mock.filter.assert_called_once_with(openalex="W1111111111|W2222222222")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_default_sort_is_citations(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
+
+        tool = GetReferencedPapers(config, db)
+        tool.execute(doi_or_id="W9999999")
+
+        mock_chain = MockWorks.return_value.filter.return_value
+        mock_chain.sort.assert_called_once_with(cited_by_count="desc")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_sort_by_recency(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
+
+        tool = GetReferencedPapers(config, db)
+        tool.execute(doi_or_id="W9999999", sort_by="recency")
+
+        mock_chain = MockWorks.return_value.filter.return_value
+        mock_chain.sort.assert_called_once_with(publication_date="desc")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_ingests_with_openalex_references_source_type(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works(
+            ["https://openalex.org/W1111111111"], FAKE_OPENALEX_WORKS[:1]
+        )
+
+        tool = GetReferencedPapers(config, db)
+        tool.execute(doi_or_id="W9999999")
+
+        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
+        assert ingested is not None
+        assert ingested.source_type == "openalex_references"
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_no_references_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works([], [])
+
+        tool = GetReferencedPapers(config, db)
+        result = tool.execute(doi_or_id="W9999999")
+
+        assert len(result.items) == 0
+        assert "no references" in result.message.lower()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_empty_id_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+
+        tool = GetReferencedPapers(config, db)
+        result = tool.execute(doi_or_id="")
+
+        assert "required" in result.message.lower()
+        MockWorks.assert_not_called()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_lookup_failure_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value.__getitem__.side_effect = OSError("not found")
+
+        tool = GetReferencedPapers(config, db)
+        result = tool.execute(doi_or_id="W9999999")
+
+        assert "failed" in result.message.lower()
+        db.close()
+
+
 class TestRegisterOpenAlexTools:
     def test_registers_tool_when_api_key_set(self, tmp_path: Path) -> None:
         config = _make_config(openalex_api_key="test-key")
@@ -1275,10 +1522,20 @@ class TestRegisterOpenAlexTools:
         assert "search_openalex" in registry.tool_names
         db.close()
 
+    def test_registers_all_tools_when_api_key_set(self, tmp_path: Path) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        registry = ToolRegistry()
+        register_openalex_tools(registry, config, db)
+        assert "get_citing_papers" in registry.tool_names
+        assert "get_referenced_papers" in registry.tool_names
+        db.close()
+
     def test_does_not_register_when_no_api_key(self, tmp_path: Path) -> None:
         config = _make_config(openalex_api_key="")
         db = Database(db_path=str(tmp_path) + "/test.db")
         registry = ToolRegistry()
         register_openalex_tools(registry, config, db)
         assert "search_openalex" not in registry.tool_names
+        assert "get_citing_papers" not in registry.tool_names
         db.close()

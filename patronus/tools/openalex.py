@@ -72,6 +72,83 @@ def _parse_topics(work: dict) -> list[str]:
     return [t["display_name"] for t in work.get("topics", [])[:5] if t.get("display_name")]
 
 
+def _resolve_openalex_id(raw: str) -> str:
+    """Return an OpenAlex Work ID (W...) for any DOI or ID input.
+
+    The `cites` filter only accepts OpenAlex IDs, so DOIs must be resolved
+    via a single-entity lookup first.
+    """
+    raw = raw.strip()
+    # Already an OpenAlex ID
+    if raw.startswith("W") and raw[1:].isdigit():
+        return raw
+    # Normalize bare DOI to URL form for the lookup
+    lookup_key = f"https://doi.org/{raw}" if raw.startswith("10.") else raw
+    try:
+        work = Works()[lookup_key]
+        openalex_url = work.get("id", "")
+        return openalex_url.split("/")[-1]  # e.g. "W2626778328"
+    except Exception:
+        logger.warning("Could not resolve %r to an OpenAlex ID, using as-is", raw)
+        return raw
+
+
+def _ingest_work(work: dict, db: "Database", config: "Config", *, embed: bool, source_type: str) -> tuple[str, bool]:
+    """Ingest a work dict into the DB. Returns (item_id, was_new)."""
+    url = _canonical_url(work)
+    if not url:
+        return "", False
+
+    existing = db.get_item_by_url(url)
+    if existing is not None:
+        logger.debug("OpenAlex paper already in DB, skipping ingest: %s", url)
+        return existing.id, False
+
+    title = (work.get("title") or "").strip()
+    abstract = (work["abstract"] or "").strip() if work.get("abstract_inverted_index") else ""
+    authors = _parse_authors(work)
+    published = work.get("publication_date") or ""
+
+    embedding = None
+    if embed and abstract:
+        try:
+            embedding = embed_text(abstract, model=config.embedding.model)
+        except Exception:
+            logger.exception("Embedding failed for OpenAlex paper: %s", url)
+
+    try:
+        item_id = db.add_item(
+            url=url,
+            source_type=source_type,
+            item_type="paper",
+            title=title,
+            author=authors,
+            text=abstract,
+            embedding=embedding,
+            timestamp=published,
+        )
+        logger.info("Ingested OpenAlex paper: %s (id=%s)", url, item_id)
+        return item_id, True
+    except Exception:
+        logger.exception("Failed to ingest OpenAlex paper: %s", url)
+        return "", False
+
+
+def _build_item_dict(work: dict, item_id: str) -> dict:
+    return {
+        "id": item_id,
+        "title": (work.get("title") or "").strip(),
+        "url": _canonical_url(work),
+        "author": _parse_authors(work),
+        "source": "openalex",
+        "item_type": "paper",
+        "timestamp": work.get("publication_date") or "",
+        "citation_count": work.get("cited_by_count") or 0,
+        "snippet": ((work["abstract"] or "") if work.get("abstract_inverted_index") else "")[:ITEM_SNIPPET_MAX_CHARS],
+        "topics": _parse_topics(work),
+    }
+
+
 class SearchOpenAlex(Tool):
     def __init__(self, config: Config, db: Database, *, embed: bool = False) -> None:
         self._config = config
@@ -182,62 +259,225 @@ class SearchOpenAlex(Tool):
         ingested = 0
 
         for work in works:
-            url = _canonical_url(work)
-            if not url:
+            if not _canonical_url(work):
                 continue
-
-            title = (work.get("title") or "").strip()
-            abstract = (work["abstract"] or "").strip() if work.get("abstract_inverted_index") else ""
-            authors = _parse_authors(work)
-            topics = _parse_topics(work)
-            published = work.get("publication_date") or ""
-            cited_by_count = work.get("cited_by_count") or 0
-
-            existing = self._db.get_item_by_url(url)
-            if existing is not None:
-                logger.debug("OpenAlex paper already in DB, skipping ingest: %s", url)
-                item_id = existing.id
-            else:
-                embedding = None
-                if self._embed and abstract:
-                    try:
-                        embedding = embed_text(abstract, model=self._config.embedding.model)
-                    except Exception:
-                        logger.exception("Embedding failed for OpenAlex paper: %s", url)
-
-                try:
-                    item_id = self._db.add_item(
-                        url=url,
-                        source_type="openalex_search",
-                        item_type="paper",
-                        title=title,
-                        author=authors,
-                        text=abstract,
-                        embedding=embedding,
-                        timestamp=published,
-                    )
-                    ingested += 1
-                    logger.info("Ingested OpenAlex paper: %s (id=%s)", url, item_id)
-                except Exception:
-                    logger.exception("Failed to ingest OpenAlex paper: %s", url)
-                    item_id = ""
-
-            items.append({
-                "id": item_id,
-                "title": title,
-                "url": url,
-                "author": authors,
-                "source": "openalex",
-                "item_type": "paper",
-                "timestamp": published,
-                "citation_count": cited_by_count,
-                "snippet": abstract[:ITEM_SNIPPET_MAX_CHARS],
-                "topics": topics,
-            })
+            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_search")
+            if is_new:
+                ingested += 1
+            items.append(_build_item_dict(work, item_id))
 
         return ToolResult(
             items=items,
             message=f"Found {len(items)} OpenAlex results for '{query}' ({ingested} newly ingested).",
+        )
+
+
+class GetCitingPapers(Tool):
+    def __init__(self, config: "Config", db: "Database", *, embed: bool = False) -> None:
+        self._config = config
+        self._db = db
+        self._embed = embed
+
+    @property
+    def name(self) -> str:
+        return "get_citing_papers"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Find papers that cite a given work, identified by DOI or OpenAlex ID. "
+            "Use this to discover recent research building on a landmark paper you already know about. "
+            "Accepts DOI in any form (e.g. '10.48550/arxiv.2405.15943', 'https://doi.org/...') "
+            "or an OpenAlex work ID (e.g. 'W2741809807'). "
+            "Results are ingested into the local database for future retrieval."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "doi_or_id": {
+                    "type": "string",
+                    "description": (
+                        "DOI or OpenAlex work ID of the paper whose citing works you want. "
+                        "Accepted formats: bare DOI ('10.1234/foo'), DOI URL ('https://doi.org/10.1234/foo'), "
+                        "or OpenAlex ID ('W2741809807')."
+                    ),
+                },
+                "n": {
+                    "type": "integer",
+                    "description": "Maximum number of citing papers to return. Defaults to 10.",
+                    "default": 10,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["citations", "recency"],
+                    "description": (
+                        "'recency' (default) returns the most recently published citing papers first. "
+                        "'citations' returns the most-cited citing papers first."
+                    ),
+                    "default": "recency",
+                },
+                "from_publication_year": {
+                    "type": "integer",
+                    "description": "If set, restrict citing papers to those published on or after this year.",
+                },
+            },
+            "required": ["doi_or_id"],
+        }
+
+    def execute(self, **params: object) -> ToolResult:
+        raw_id = str(params.get("doi_or_id", "")).strip()
+        n = int(params.get("n", 10))
+        sort_by = str(params.get("sort_by", "recency"))
+        from_year_raw = params.get("from_publication_year")
+        from_year = int(from_year_raw) if from_year_raw is not None else None
+
+        if not raw_id:
+            return ToolResult(message="doi_or_id is required.")
+
+        pyalex.config.api_key = self._config.openalex_api_key
+        work_id = _resolve_openalex_id(raw_id)
+
+        try:
+            q = Works().filter(cites=work_id)
+            if sort_by == "citations":
+                q = q.sort(cited_by_count="desc")
+            else:
+                q = q.sort(publication_date="desc")
+            if from_year is not None:
+                q = q.filter(from_publication_date=f"{from_year}-01-01")
+            works = q.get(per_page=n)
+        except Exception:
+            logger.exception("OpenAlex citing-papers request failed for %r", work_id)
+            return ToolResult(message=f"OpenAlex request failed for '{raw_id}'.")
+
+        if not works:
+            return ToolResult(message=f"No citing papers found for '{raw_id}'.")
+
+        items: list[dict] = []
+        ingested = 0
+
+        for work in works:
+            if not _canonical_url(work):
+                continue
+            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_citing")
+            if is_new:
+                ingested += 1
+            items.append(_build_item_dict(work, item_id))
+
+        return ToolResult(
+            items=items,
+            message=f"Found {len(items)} papers citing '{raw_id}' ({ingested} newly ingested).",
+        )
+
+
+class GetReferencedPapers(Tool):
+    def __init__(self, config: "Config", db: "Database", *, embed: bool = False) -> None:
+        self._config = config
+        self._db = db
+        self._embed = embed
+
+    @property
+    def name(self) -> str:
+        return "get_referenced_papers"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Fetch the papers cited by a given work — its bibliography. "
+            "Use this to trace the intellectual lineage of a paper or find foundational "
+            "works in a field. Accepts the same identifier formats as get_citing_papers. "
+            "Results are sorted by citation count by default (most influential references first) "
+            "and ingested into the local database for future retrieval."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "doi_or_id": {
+                    "type": "string",
+                    "description": (
+                        "DOI or OpenAlex work ID of the paper whose references you want. "
+                        "Accepted formats: bare DOI ('10.1234/foo'), DOI URL ('https://doi.org/10.1234/foo'), "
+                        "or OpenAlex ID ('W2741809807')."
+                    ),
+                },
+                "n": {
+                    "type": "integer",
+                    "description": "Maximum number of referenced papers to return. Defaults to 10.",
+                    "default": 10,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["citations", "recency"],
+                    "description": (
+                        "'citations' (default) returns the most-cited references first — useful for "
+                        "identifying landmark papers. "
+                        "'recency' returns the most recently published references first."
+                    ),
+                    "default": "citations",
+                },
+            },
+            "required": ["doi_or_id"],
+        }
+
+    def execute(self, **params: object) -> ToolResult:
+        raw_id = str(params.get("doi_or_id", "")).strip()
+        n = int(params.get("n", 10))
+        sort_by = str(params.get("sort_by", "citations"))
+
+        if not raw_id:
+            return ToolResult(message="doi_or_id is required.")
+
+        pyalex.config.api_key = self._config.openalex_api_key
+        work_id = _resolve_openalex_id(raw_id)
+
+        try:
+            source = Works()[work_id]
+            ref_ids = [r.split("/")[-1] for r in (source.get("referenced_works") or [])]
+        except Exception:
+            logger.exception("Failed to fetch work %r", work_id)
+            return ToolResult(message=f"Failed to fetch work '{raw_id}'.")
+
+        if not ref_ids:
+            return ToolResult(message=f"No references found for '{raw_id}'.")
+
+        # Batch-fetch up to 100 IDs with server-side sort, then trim to n.
+        # The API supports up to 100 IDs in a single OR filter.
+        chunk = ref_ids[:100]
+        try:
+            q = Works().filter(openalex="|".join(chunk))
+            if sort_by == "citations":
+                q = q.sort(cited_by_count="desc")
+            else:
+                q = q.sort(publication_date="desc")
+            works = q.get(per_page=n)
+        except Exception:
+            logger.exception("Failed to fetch referenced works for %r", work_id)
+            return ToolResult(message=f"Failed to fetch references for '{raw_id}'.")
+
+        items: list[dict] = []
+        ingested = 0
+
+        for work in works:
+            if not _canonical_url(work):
+                continue
+            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_references")
+            if is_new:
+                ingested += 1
+            items.append(_build_item_dict(work, item_id))
+
+        total_refs = len(ref_ids)
+        return ToolResult(
+            items=items,
+            message=(
+                f"Found {len(items)} references for '{raw_id}' "
+                f"({total_refs} total in bibliography, {ingested} newly ingested)."
+            ),
         )
 
 
@@ -251,5 +491,7 @@ def register_openalex_tools(
     from patronus.tools import ToolRegistry as _TR  # noqa: F401
     if config.openalex_api_key:
         registry.register(SearchOpenAlex(config, db, embed=embed))
+        registry.register(GetCitingPapers(config, db, embed=embed))
+        registry.register(GetReferencedPapers(config, db, embed=embed))
     else:
-        logger.warning("OPENALEX_API_KEY not set — search_openalex tool disabled")
+        logger.warning("OPENALEX_API_KEY not set — OpenAlex tools disabled")
