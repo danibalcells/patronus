@@ -68,29 +68,33 @@ def _format_deterministic_item(item: DigestItem) -> str:
     return "\n".join(lines)
 
 
+def format_digest(digest: Digest) -> str:
+    lines: list[str] = []
+
+    date_str = digest.generated_at[:10] if digest.generated_at else "unknown"
+    lines.append(f"\n{_SEPARATOR}")
+    lines.append(f"  DAILY DIGEST — {date_str}")
+    lines.append(f"  Mode: {digest.mode} | Items: {digest.item_count}")
+    lines.append(_SEPARATOR)
+
+    if digest.mode == "agent" and digest.sections:
+        for section in digest.sections:
+            lines.append("")
+            lines.append(_format_section(section))
+    elif digest.items:
+        lines.append("")
+        for item in digest.items:
+            lines.append(_format_deterministic_item(item))
+            lines.append("")
+    else:
+        lines.append("\n  No items in today's digest.")
+
+    lines.append(_SEPARATOR)
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 class TerminalOutput:
     def send(self, digest: Digest, config: Config) -> None:
-        lines: list[str] = []
-
-        date_str = digest.generated_at[:10] if digest.generated_at else "unknown"
-        lines.append(f"\n{_SEPARATOR}")
-        lines.append(f"  DAILY DIGEST — {date_str}")
-        lines.append(f"  Mode: {digest.mode} | Items: {digest.item_count}")
-        lines.append(_SEPARATOR)
-
-        if digest.mode == "agent" and digest.sections:
-            for section in digest.sections:
-                lines.append("")
-                lines.append(_format_section(section))
-        elif digest.items:
-            lines.append("")
-            for item in digest.items:
-                lines.append(_format_deterministic_item(item))
-                lines.append("")
-        else:
-            lines.append("\n  No items in today's digest.")
-
-        lines.append(_SEPARATOR)
-        lines.append("")
-
-        print("\n".join(lines))
+        print(format_digest(digest))

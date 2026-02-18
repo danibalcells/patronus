@@ -16,6 +16,7 @@ from patronus.llm import (
     complete_with_tools,
 )
 from patronus.observability import agent_run, iteration_span, llm_generation, planning_generation, tool_call
+from patronus.output.terminal import format_digest
 from patronus.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -314,7 +315,7 @@ def plan_and_assemble(
                             "iterations_used": iteration + 1,
                         }
                         iter_obs.update(output=digest_summary)
-                        run_obs.update(output=digest_summary)
+                        run_obs.update(output=format_digest(digest))
                         return digest
                     except Exception:
                         logger.exception("Failed to parse submit_digest input")
