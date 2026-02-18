@@ -61,6 +61,15 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# SQLite databases and all associated files
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -207,5 +216,4 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Notion mirror
-notion_mirror.sqlite3
+# Notion mirror (covered by SQLite glob patterns above)
