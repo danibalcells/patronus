@@ -9,10 +9,12 @@ from urllib.error import HTTPError, URLError
 from patronus.config import Config
 from patronus.digest import Digest
 from patronus.output.feed import format_digest_html
+from patronus.summarize import summarize_digest
 
 logger = logging.getLogger(__name__)
 
 _API_URL = "https://readwise.io/api/v3/save/"
+_IMAGE_URL = "https://raw.githubusercontent.com/danibalcells/patronus/a9f2cd699ef33a741c314ef50de897ccdc2fe872/image.jpg"
 
 
 class ReaderOutput:
@@ -27,13 +29,25 @@ class ReaderOutput:
         title = f"Patronus Daily Digest \u2014 {date_str}"
         html_content = format_digest_html(digest)
 
+        item_pairs = [(item.title, item.summary) for item in digest.items if item.title]
+        summary = ""
+        if item_pairs:
+            try:
+                summary = summarize_digest(item_pairs)
+            except Exception:
+                logger.warning("Failed to generate digest summary", exc_info=True)
+
         payload = json.dumps(
             {
                 "url": url,
                 "title": title,
                 "html": html_content,
+                "author": "Patronus",
+                "category": "Patronus",
+                "summary": summary,
+                "image_url": _IMAGE_URL,
                 "location": "feed",
-                "saved_using": "patronus",
+                "saved_using": "Patronus",
             }
         ).encode("utf-8")
 

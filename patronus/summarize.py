@@ -6,8 +6,11 @@ from typing import Optional
 import anthropic
 from dotenv import load_dotenv
 
+import patronus.llm as llm
+
 _client: Optional[anthropic.Anthropic] = None
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
+_DIGEST_SUMMARY_MODEL = "google/gemini-3-flash-preview"
 
 _SYSTEM_PROMPT = (
     "You write very short summaries (2 sentences max, ~40 words total) of pre-curated articles "
@@ -15,6 +18,13 @@ _SYSTEM_PROMPT = (
     "No filler, no preamble, no promotional language."
     "Don't start with 'This article is about...' or 'The article discusses...' but rather go straight to the point."
     "Don't structure your response in paragraphs, bullets or titles, just write a single paragraph."
+)
+
+_DIGEST_SYSTEM_PROMPT = (
+    "You write an ultra-condensed tagline summary of a daily reading digest. "
+    "List the key topics as short comma-separated fragments, like: "
+    "\"New Claude release, Zvi on the Pentagon, when to think without words, ...\". "
+    "No sentences, no preamble, no filler. Just the fragments, ending with '...'."
 )
 
 
@@ -50,3 +60,17 @@ def summarize_item(
         ],
     )
     return response.content[0].text
+
+
+def summarize_digest(
+    items: list[tuple[str, str]],
+    *,
+    model: str = _DIGEST_SUMMARY_MODEL,
+) -> str:
+    items_text = "\n".join(f"- {title}: {summary}" for title, summary in items)
+    return llm.complete(
+        model,
+        system=_DIGEST_SYSTEM_PROMPT,
+        user_message=f"Today's digest items:\n\n{items_text}",
+        max_tokens=256,
+    )
