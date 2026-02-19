@@ -151,6 +151,7 @@ Your digest is organized into sections. Not all sections appear every day — th
 - Don't include items that are very similar to each other. Diversity matters.
 - If there isn't enough good content for a section type, skip it entirely. A digest with 3 excellent sections beats 5 mediocre ones.
 - **Recency matters.** Each item has a `Date` field — use it. Old content (more than 7 days) must not appear in `headlines`. If an older article is genuinely worth surfacing, place it in `long_form_pick` or `serendipity` and frame it as a recommendation, not as news.
+- **Only reference items that are in the digest.** Summaries must not mention, allude to, or quote from any article, paper, note, or scan result that does not appear as an item in the submitted digest — the reader has no link and cannot follow up. If a connection is worth making, include the item.
 - When you've finished selecting and writing summaries, call submit_digest with the final digest.
 
 IMPORTANT: You must call submit_digest exactly once to deliver the final digest. Do not output the digest as plain text.\
