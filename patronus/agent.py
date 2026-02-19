@@ -29,15 +29,66 @@ class Phase(Enum):
     ASSEMBLY = "assembly"
 
 
+_SCAN_ITERATIONS = 2
+_ASSEMBLY_ITERATIONS = 2
+
+
 def get_phase(iteration: int, max_iterations: int) -> Phase:
-    scan_end = max_iterations // 3
-    deep_dive_end = 2 * max_iterations // 3
+    scan_end = _SCAN_ITERATIONS
+    deep_dive_end = max_iterations - _ASSEMBLY_ITERATIONS
     if iteration < scan_end:
         return Phase.SCAN
     elif iteration < deep_dive_end:
         return Phase.DEEP_DIVE
     else:
         return Phase.ASSEMBLY
+
+
+def _phase_counts(max_iterations: int) -> dict[Phase, int]:
+    deep_dive = max_iterations - _SCAN_ITERATIONS - _ASSEMBLY_ITERATIONS
+    return {
+        Phase.SCAN: _SCAN_ITERATIONS,
+        Phase.DEEP_DIVE: deep_dive,
+        Phase.ASSEMBLY: _ASSEMBLY_ITERATIONS,
+    }
+
+
+def _phase_label(phase: Phase) -> str:
+    return phase.value.upper().replace("_", " ")
+
+
+def _build_phase_context_line(iteration: int, max_iterations: int, phase: Phase) -> str:
+    counts = _phase_counts(max_iterations)
+    scan_end = counts[Phase.SCAN]
+    deep_dive_end = scan_end + counts[Phase.DEEP_DIVE]
+
+    phase_start = {Phase.SCAN: 0, Phase.DEEP_DIVE: scan_end, Phase.ASSEMBLY: deep_dive_end}[phase]
+    phase_iter = iteration - phase_start + 1
+    phase_total = counts[phase]
+    remaining_in_phase = phase_total - phase_iter
+
+    schedule = " → ".join(
+        f"{_phase_label(p)} ×{counts[p]}"
+        for p in [Phase.SCAN, Phase.DEEP_DIVE, Phase.ASSEMBLY]
+    )
+
+    after_parts: list[str] = []
+    if phase == Phase.SCAN:
+        after_parts = [
+            f"DEEP DIVE ×{counts[Phase.DEEP_DIVE]}",
+            f"ASSEMBLY ×{counts[Phase.ASSEMBLY]}",
+        ]
+    elif phase == Phase.DEEP_DIVE:
+        after_parts = [f"ASSEMBLY ×{counts[Phase.ASSEMBLY]}"]
+
+    after_str = (", then ".join(after_parts)) if after_parts else "nothing — submit your digest now"
+    remaining_str = f"{remaining_in_phase} remaining in this phase" if remaining_in_phase > 0 else "last iteration in this phase"
+
+    return (
+        f"Phase schedule: {schedule}\n"
+        f"Current phase: {_phase_label(phase)} — iteration {phase_iter}/{phase_total} "
+        f"({remaining_str}). After this phase: {after_str}."
+    )
 
 
 SCAN_PLANNING_PROMPT = """\
@@ -282,10 +333,11 @@ def _build_iteration_planning_message(
     context_prose: str,
 ) -> str:
     history_str = "\n".join(f"  - {s}" for s in search_history) if search_history else "  None yet."
+    phase_context = _build_phase_context_line(iteration, max_iterations, phase)
     return (
         f"Reader context:\n{context_prose}\n\n"
         f"---\n\n"
-        f"Phase: {phase.value.upper().replace('_', ' ')} | Iteration {iteration + 1} of {max_iterations}.\n\n"
+        f"{phase_context}\n\n"
         f"Searches completed so far:\n{history_str}\n\n"
         "Reflect on where you are and what to do in this iteration."
     )
@@ -373,10 +425,16 @@ def plan_and_assemble(
                     logger.debug("Iteration %d thought:\n%s", iteration + 1, thought)
                     plan_obs.update(output=thought)
 
+                counts = _phase_counts(agent_config.max_iterations)
+                scan_end = counts[Phase.SCAN]
+                deep_dive_end = scan_end + counts[Phase.DEEP_DIVE]
+                phase_start_iter = {Phase.SCAN: 0, Phase.DEEP_DIVE: scan_end, Phase.ASSEMBLY: deep_dive_end}[phase]
+                phase_iter = iteration - phase_start_iter + 1
+                phase_total = counts[phase]
                 messages.append({
                     "role": "user",
                     "content": (
-                        f"[{phase.value.upper().replace('_', ' ')} — iteration {iteration + 1}/{agent_config.max_iterations}]\n\n"
+                        f"[{_phase_label(phase)} — phase iteration {phase_iter}/{phase_total}, global {iteration + 1}/{agent_config.max_iterations}]\n\n"
                         f"{thought}"
                     ),
                 })

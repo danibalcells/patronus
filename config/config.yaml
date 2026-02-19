@@ -1,6 +1,6 @@
 digest:
-  size: 10
-  max_per_topic: 3
+  size: 12
+  max_per_topic: 4
   schedule: "08:00"
   timezone: "America/New_York"
   mode: "agent"
@@ -19,8 +19,8 @@ agent:
   model: "anthropic/claude-sonnet-4-5-20250929"
   # planning_model: "anthropic/claude-haiku-4-5-20251001"
   planning_model: "anthropic/claude-sonnet-4-5-20250929"
-  max_iterations: 10
-  max_tokens: 4096
+  max_iterations: 7
+  max_tokens: 5000
 
 telegram:
   chat_id: "1646448265"
