@@ -15,7 +15,9 @@ summarization:
   model: "claude-haiku-4-5-20251001"
 
 agent:
+  # model: "anthropic/claude-haiku-4-5-20251001"
   model: "anthropic/claude-sonnet-4-5-20250929"
+  # planning_model: "anthropic/claude-haiku-4-5-20251001"
   planning_model: "anthropic/claude-sonnet-4-5-20250929"
   max_iterations: 10
   max_tokens: 4096

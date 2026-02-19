@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.79.0",
+    "boto3>=1.42.52",
     "feedgen>=1.0.0",
     "feedparser>=6.0.11",
     "google-cloud-storage>=3.3.0",
@@ -11,6 +12,7 @@ dependencies = [
     "ipython>=9.4.0",
     "jupyter>=1.1.1",
     "langfuse>=3.14.3",
+    "modal>=1.3.3",
     "notion-client>=2.7.0",
     "numpy>=1.24.0",
     "openai>=1.101.0",
