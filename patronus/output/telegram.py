@@ -30,10 +30,16 @@ def _format_item_line(item: DigestItem) -> str:
     title = _clean_html(item.title or "Untitled")
     url = item.url
     source = item.source or ""
+    date = item.published_date[:7] if item.published_date else ""  # YYYY-MM
 
     line = f"[{_escape_markdown_v2(title)}]({_escape_url(url)})"
+    meta_parts = []
     if source:
-        line += f" — _{_escape_markdown_v2(source)}_"
+        meta_parts.append(f"_{_escape_markdown_v2(source)}_")
+    if date:
+        meta_parts.append(_escape_markdown_v2(date))
+    if meta_parts:
+        line += " — " + ", ".join(meta_parts)
     if item.summary:
         line += f"\n{_escape_markdown_v2(item.summary)}"
     return line

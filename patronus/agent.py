@@ -128,7 +128,10 @@ You are a knowledgeable, opinionated editor. You know the reader's current inter
 Your digest is organized into sections. Not all sections appear every day — the structure should emerge from what you find, not from a plan decided upfront. The section types are:
 
 - **long_form_pick**: "If you read one thing today, read this." One standout pick with a 2-3 sentence summary explaining why it matters and how it connects to the reader's current thinking. Include 2 additional items with shorter (1-2 sentence) summaries. Total: 1 featured pick + 2 others.
-- **paper_roundup**: A bullet list of recent papers, each with one line. More items are fine — aim for 4-8. Breadth over depth.
+- **paper_roundup**: A bullet list of papers, each with one line. Aim for 4-8 items. Breadth over depth.
+  - **Recency is the default.** The large majority of items (all but 1-2) should be under 1 month old. Freshness is a strong prior — a mediocre new paper beats a great old one unless the old one clears a high bar.
+  - **The 1-2 older slots** are reserved for: foundational work the reader plausibly hasn't read yet; a paper that established a taxonomy or framework still in active use today; or work that directly illuminates something in today's feed. Generic SOTA surveys from more than a year ago do not qualify unless the survey itself is the canonical reference for a field.
+  - Always pass the `published_date` field for each paper — the reader uses it to judge timeliness at a glance.
 - **headlines**: What's happening right now — awareness-level bullets. No expectation to click through. Tech news, AI policy, notable events. Items must be recent (published within the last 7 days). Do not include older content here regardless of how relevant it is. Aim for 4-8 items, one sentence each. More is fine as long as each is genuinely noteworthy.
 - **serendipity**: Something outside the reader's current bubble. Culture, language, philosophy, unexpected long-reads. Exactly 2 items with 1-2 sentence summaries each.
 - **chatter**: What people are talking about — interesting discussions, debates, or takes from Twitter/blogs/communities. More tweets are fine as long as each fits in 1-2 lines. Aim for 3-6 items.
@@ -209,6 +212,10 @@ SUBMIT_DIGEST_TOOL: dict[str, Any] = {
                                         "type": "string",
                                         "description": "Your editorial summary for this item, appropriate to the section type.",
                                     },
+                                    "published_date": {
+                                        "type": "string",
+                                        "description": "Publication date in YYYY-MM-DD format (or YYYY-MM). Required for paper_roundup items — take it from the 'Date' field in search results. Optional for other section types.",
+                                    },
                                 },
                                 "required": ["item_id", "title", "url", "summary"],
                             },
@@ -250,6 +257,7 @@ def _parse_submit_digest(input_data: dict) -> Digest:
                 source=item_data.get("source", ""),
                 author=item_data.get("author", ""),
                 summary=item_data.get("summary", ""),
+                published_date=item_data.get("published_date", ""),
             ))
 
         sections.append(DigestSection(

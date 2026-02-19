@@ -26,13 +26,15 @@ def _format_item(item: DigestItem, indent: str = "  ") -> str:
     lines.append(f"{indent}{title}")
     if item.url:
         lines.append(f"{indent}  {item.url}")
-    source_parts = []
+    meta_parts = []
     if item.source:
-        source_parts.append(item.source)
+        meta_parts.append(item.source)
     if item.author:
-        source_parts.append(item.author)
-    if source_parts:
-        lines.append(f"{indent}  [{' / '.join(source_parts)}]")
+        meta_parts.append(item.author)
+    if item.published_date:
+        meta_parts.append(item.published_date[:7])  # YYYY-MM
+    if meta_parts:
+        lines.append(f"{indent}  [{' / '.join(meta_parts)}]")
     if item.summary:
         lines.append(f"{indent}  {item.summary}")
     return "\n".join(lines)

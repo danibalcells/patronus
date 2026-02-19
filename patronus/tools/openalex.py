@@ -72,25 +72,66 @@ def _parse_topics(work: dict) -> list[str]:
     return [t["display_name"] for t in work.get("topics", [])[:5] if t.get("display_name")]
 
 
-def _resolve_openalex_id(raw: str) -> str:
-    """Return an OpenAlex Work ID (W...) for any DOI or ID input.
+_ARXIV_URL_PREFIX = "https://arxiv.org/abs/"
 
-    The `cites` filter only accepts OpenAlex IDs, so DOIs must be resolved
-    via a single-entity lookup first.
+
+def _normalize_to_lookup_key(raw: str) -> str | None:
+    """Return a key suitable for Works()[key], or None if the format is unrecognised.
+
+    Accepted inputs:
+      - OpenAlex ID:   W2741809807  or  https://openalex.org/W2741809807
+      - Bare DOI:      10.48550/arxiv.1706.03762
+      - DOI URL:       https://doi.org/10.48550/arxiv.1706.03762
+      - arXiv URL:     https://arxiv.org/abs/1706.03762  (converted to DOI)
     """
-    raw = raw.strip()
-    # Already an OpenAlex ID
     if raw.startswith("W") and raw[1:].isdigit():
         return raw
-    # Normalize bare DOI to URL form for the lookup
-    lookup_key = f"https://doi.org/{raw}" if raw.startswith("10.") else raw
+    if raw.startswith("https://openalex.org/W"):
+        return raw.split("/")[-1]
+    if raw.startswith("10."):
+        return f"https://doi.org/{raw}"
+    if raw.startswith("https://doi.org/"):
+        return raw
+    if raw.startswith(_ARXIV_URL_PREFIX):
+        arxiv_id = raw[len(_ARXIV_URL_PREFIX):]
+        return f"https://doi.org/10.48550/arxiv.{arxiv_id}"
+    return None
+
+
+def _resolve_openalex_id(raw: str) -> str | None:
+    """Return an OpenAlex Work ID (W...) for a recognised DOI or ID input.
+
+    The `cites` filter only accepts OpenAlex IDs, so DOIs must be resolved
+    via a single-entity lookup first. Returns None if the format is unrecognised.
+    """
+    lookup_key = _normalize_to_lookup_key(raw)
+    if lookup_key is None:
+        return None
+    if lookup_key.startswith("W") and lookup_key[1:].isdigit():
+        return lookup_key
     try:
         work = Works()[lookup_key]
         openalex_url = work.get("id", "")
         return openalex_url.split("/")[-1]  # e.g. "W2626778328"
     except Exception:
-        logger.warning("Could not resolve %r to an OpenAlex ID, using as-is", raw)
-        return raw
+        logger.warning("Could not resolve %r to an OpenAlex ID", raw)
+        return None
+
+
+_ID_FORMAT_HELP = (
+    "Accepted formats: OpenAlex ID ('W2741809807'), "
+    "bare DOI ('10.48550/arxiv.1706.03762'), "
+    "DOI URL ('https://doi.org/10.48550/arxiv.1706.03762'), "
+    "or arXiv URL ('https://arxiv.org/abs/1706.03762'). "
+    "Arbitrary web URLs (e.g. blog posts) are not supported — only works indexed by OpenAlex."
+)
+
+
+def _unrecognised_id_message(raw: str) -> str:
+    return (
+        f"Could not recognise '{raw}' as a valid work identifier. "
+        + _ID_FORMAT_HELP
+    )
 
 
 def _ingest_work(work: dict, db: "Database", config: "Config", *, embed: bool, source_type: str) -> tuple[str, bool]:
@@ -299,11 +340,7 @@ class GetCitingPapers(Tool):
             "properties": {
                 "doi_or_id": {
                     "type": "string",
-                    "description": (
-                        "DOI or OpenAlex work ID of the paper whose citing works you want. "
-                        "Accepted formats: bare DOI ('10.1234/foo'), DOI URL ('https://doi.org/10.1234/foo'), "
-                        "or OpenAlex ID ('W2741809807')."
-                    ),
+                    "description": "DOI or OpenAlex work ID of the paper whose citing works you want. " + _ID_FORMAT_HELP,
                 },
                 "n": {
                     "type": "integer",
@@ -339,6 +376,8 @@ class GetCitingPapers(Tool):
 
         pyalex.config.api_key = self._config.openalex_api_key
         work_id = _resolve_openalex_id(raw_id)
+        if work_id is None:
+            return ToolResult(message=_unrecognised_id_message(raw_id))
 
         try:
             q = Works().filter(cites=work_id)
@@ -400,11 +439,7 @@ class GetReferencedPapers(Tool):
             "properties": {
                 "doi_or_id": {
                     "type": "string",
-                    "description": (
-                        "DOI or OpenAlex work ID of the paper whose references you want. "
-                        "Accepted formats: bare DOI ('10.1234/foo'), DOI URL ('https://doi.org/10.1234/foo'), "
-                        "or OpenAlex ID ('W2741809807')."
-                    ),
+                    "description": "DOI or OpenAlex work ID of the paper whose references you want. " + _ID_FORMAT_HELP,
                 },
                 "n": {
                     "type": "integer",
@@ -435,6 +470,8 @@ class GetReferencedPapers(Tool):
 
         pyalex.config.api_key = self._config.openalex_api_key
         work_id = _resolve_openalex_id(raw_id)
+        if work_id is None:
+            return ToolResult(message=_unrecognised_id_message(raw_id))
 
         try:
             source = Works()[work_id]

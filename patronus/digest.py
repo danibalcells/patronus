@@ -34,6 +34,7 @@ class DigestItem:
     source: str = ""
     author: str = ""
     item_type: str = "article"
+    published_date: str = ""
 
 
 @dataclass

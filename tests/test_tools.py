@@ -1370,6 +1370,35 @@ class TestGetCitingPapers:
         db.close()
 
     @patch("patronus.tools.openalex.Works")
+    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+
+        tool = GetCitingPapers(config, db)
+        result = tool.execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
+
+        assert "could not recognise" in result.message.lower()
+        assert "OpenAlex" in result.message
+        MockWorks.assert_not_called()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_arxiv_url_resolved_correctly(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        mock = MagicMock()
+        mock.__getitem__.return_value = {"id": "https://openalex.org/W9999999"}
+        mock.filter.return_value = _make_mock_works_chain([])
+        mock.filter.return_value.sort.return_value = mock.filter.return_value
+        MockWorks.return_value = mock
+
+        tool = GetCitingPapers(config, db)
+        tool.execute(doi_or_id="https://arxiv.org/abs/1706.03762")
+
+        mock.__getitem__.assert_called_once_with("https://doi.org/10.48550/arxiv.1706.03762")
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
     def test_no_results_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         config = _make_config(openalex_api_key="test-key")
@@ -1497,6 +1526,18 @@ class TestGetReferencedPapers:
         result = tool.execute(doi_or_id="")
 
         assert "required" in result.message.lower()
+        MockWorks.assert_not_called()
+        db.close()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+
+        tool = GetReferencedPapers(config, db)
+        result = tool.execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
+
+        assert "could not recognise" in result.message.lower()
         MockWorks.assert_not_called()
         db.close()
 
