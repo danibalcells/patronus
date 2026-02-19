@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
-from sqlalchemy import LargeBinary, event
+from sqlalchemy import LargeBinary, event, text
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
@@ -73,7 +73,7 @@ class DigestItemRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=_new_id, primary_key=True)
     digest_id: str = Field(foreign_key="digests.id", index=True)
-    item_id: str = Field(foreign_key="items.id", index=True)
+    item_id: str = Field(index=True)
     summary: Optional[str] = None
     score: float = Field(default=0.0)
     matched_topic: Optional[str] = None
@@ -103,6 +103,40 @@ class Database:
             cursor.close()
 
         SQLModel.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        with self.engine.connect() as conn:
+            fks = conn.execute(text("PRAGMA foreign_key_list('digest_items')")).fetchall()
+            has_item_id_fk = any(row[3] == "item_id" for row in fks)
+            if not has_item_id_fk:
+                return
+
+            conn.execute(text("PRAGMA foreign_keys=OFF"))
+            conn.execute(text("""
+                CREATE TABLE digest_items_new (
+                    id            TEXT PRIMARY KEY,
+                    digest_id     TEXT NOT NULL REFERENCES digests(id),
+                    item_id       TEXT NOT NULL,
+                    summary       TEXT,
+                    score         REAL NOT NULL DEFAULT 0.0,
+                    matched_topic TEXT
+                )
+            """))
+            conn.execute(text(
+                "INSERT INTO digest_items_new "
+                "SELECT id, digest_id, item_id, summary, score, matched_topic FROM digest_items"
+            ))
+            conn.execute(text("DROP TABLE digest_items"))
+            conn.execute(text("ALTER TABLE digest_items_new RENAME TO digest_items"))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_digest_items_digest_id ON digest_items(digest_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_digest_items_item_id ON digest_items(item_id)"
+            ))
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            conn.commit()
 
     def __enter__(self) -> Database:
         return self
