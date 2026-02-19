@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 
 _FTS_TABLE = "pages_fts"
 _SNIPPET_LENGTH = 300
+_FTS5_SPECIAL = str.maketrans({c: " " for c in '"*^()-:'})
+
+
+def _sanitize_fts5_query(query: str) -> str:
+    cleaned = query.translate(_FTS5_SPECIAL)
+    tokens = [t for t in cleaned.split() if t]
+    if not tokens:
+        return '""'
+    return " ".join(f'"{t}"' for t in tokens)
 
 
 @dataclass
@@ -174,12 +183,13 @@ class NotionMirror:
         limit: int = 10,
         source_dbs: Optional[list[str]] = None,
     ) -> list[MirrorPage]:
-        params: list[object] = [query, limit]
+        fts_query = _sanitize_fts5_query(query)
+        params: list[object] = [fts_query, limit]
         source_filter = ""
         if source_dbs:
             placeholders = ",".join("?" * len(source_dbs))
             source_filter = f"AND p.source_db IN ({placeholders})"
-            params = [query] + list(source_dbs) + [limit]
+            params = [fts_query] + list(source_dbs) + [limit]
             sql = f"""
                 SELECT p.id, p.title, p.content, p.source_db, p.url, p.created_at, p.last_edited_at
                 FROM pages_fts f
