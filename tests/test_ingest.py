@@ -976,6 +976,34 @@ class TestParseTweetHtml:
         _text, links = _parse_tweet_html(RSSAPP_TWEET_WITH_IMAGE_HTML)
         assert "https://x.com/AISafetyMemes/status/1863618182398820596" in links
 
+    def test_abridged_url_replaced_with_full_href(self) -> None:
+        html = (
+            'Check out this post: '
+            '<a href="https://bounded-regret.ghost.io/building-a-thing">'
+            "bounded-regret.ghost.io/buil\u2026"
+            "</a>"
+        )
+        text, links = _parse_tweet_html(html)
+        assert "bounded-regret.ghost.io/buil\u2026" not in text
+        assert "https://bounded-regret.ghost.io/building-a-thing" in text
+        assert links == ["https://bounded-regret.ghost.io/building-a-thing"]
+
+    def test_non_abridged_link_text_unchanged(self) -> None:
+        html = (
+            '<a href="https://x.com/user/status/123">'
+            "https://x.com/user/status/123"
+            "</a>"
+        )
+        text, links = _parse_tweet_html(html)
+        assert "https://x.com/user/status/123" in text
+        assert links == ["https://x.com/user/status/123"]
+
+    def test_non_url_link_text_unchanged(self) -> None:
+        html = '<a href="https://x.com/hashtag/AI">#AI</a> is exciting'
+        text, links = _parse_tweet_html(html)
+        assert "#AI" in text
+        assert "https://x.com/hashtag/AI" not in text
+
     def test_empty_html(self) -> None:
         text, links = _parse_tweet_html("")
         assert text == ""
