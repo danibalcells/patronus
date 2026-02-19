@@ -86,7 +86,7 @@ def summarize_digest(
             system=_DIGEST_SYSTEM_PROMPT,
             user_message=user_message,
             schema=DigestSummary,
-            max_tokens=512,
+            max_tokens=1024,
         )
         span.update(output=result.model_dump())
         return result
