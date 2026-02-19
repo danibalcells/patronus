@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
-import re
-from dataclasses import dataclass
 from typing import Optional
 
 import anthropic
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 import patronus.llm as llm
 
@@ -25,19 +23,17 @@ _SYSTEM_PROMPT = (
 
 _DIGEST_SYSTEM_PROMPT = (
     "You produce a structured summary of a daily reading digest. "
-    "Return a JSON object with exactly two fields:\n"
-    "- \"title\": a very short title (max 50 characters) capturing the 2-3 most distinctive topics, "
-    "e.g. \"ML scaling limits, Hofstadter on loops\"\n"
-    "- \"tagline\": a comma-separated list of short topic fragments ending with '...', "
-    "e.g. \"New Claude release, Zvi on the Pentagon, when to think without words, ...\"\n"
-    "Return only the JSON object — no markdown fences, no preamble."
+    "title: a very short title (max 50 characters) capturing the 2-3 most distinctive topics, "
+    "e.g. \"ML scaling limits, Hofstadter on loops\". "
+    "tagline: a comma-separated list of short topic fragments ending with '...', "
+    "e.g. \"New Claude release, Zvi on the Pentagon, when to think without words, ...\". "
+    "No preamble, no filler."
 )
 
 
-@dataclass
-class DigestSummary:
-    title: str
-    tagline: str
+class DigestSummary(BaseModel):
+    title: str = Field(description="Very short title (max 50 characters) capturing the 2-3 most distinctive topics")
+    tagline: str = Field(description="Comma-separated short topic fragments ending with '...'")
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -80,12 +76,10 @@ def summarize_digest(
     model: str = _DIGEST_SUMMARY_MODEL,
 ) -> DigestSummary:
     items_text = "\n".join(f"- {title}: {summary}" for title, summary in items)
-    raw = llm.complete(
+    return llm.complete_structured(
         model,
         system=_DIGEST_SYSTEM_PROMPT,
         user_message=f"Today's digest items:\n\n{items_text}",
-        max_tokens=300,
+        schema=DigestSummary,
+        max_tokens=1024,
     )
-    stripped = re.sub(r"^```[a-z]*\n?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-    data = json.loads(stripped)
-    return DigestSummary(title=data["title"], tagline=data["tagline"])

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
 
 _anthropic_client: Optional[object] = None
 _google_client: Optional[object] = None
@@ -64,6 +68,26 @@ def complete_with_tools(
         )
     else:
         raise ValueError(f"Provider '{provider}' does not support tool use yet.")
+
+
+def complete_structured(
+    model: str,
+    *,
+    system: str = "",
+    user_message: str,
+    schema: type[T],
+    max_tokens: int = 4096,
+) -> T:
+    provider, model_name = model.split("/", 1)
+
+    if provider == "google":
+        return _complete_structured_google(model_name, system=system, user_message=user_message, schema=schema, max_tokens=max_tokens)
+    elif provider == "openai":
+        return _complete_structured_openai(model_name, system=system, user_message=user_message, schema=schema, max_tokens=max_tokens)
+    elif provider == "anthropic":
+        return _complete_structured_anthropic(model_name, system=system, user_message=user_message, schema=schema, max_tokens=max_tokens)
+    else:
+        raise ValueError(f"Provider '{provider}' does not support structured output yet.")
 
 
 def build_tool_result_message(tool_calls: list[ToolCall], results: dict[str, str]) -> dict[str, Any]:
@@ -307,3 +331,90 @@ def _convert_tools_to_openai(tools: list[dict]) -> list[dict]:
             },
         })
     return oai_tools
+
+
+def _complete_structured_google(
+    model: str, *, system: str, user_message: str, schema: type[T], max_tokens: int
+) -> T:
+    global _google_client
+    from google import genai
+    from google.genai import types
+
+    if _google_client is None:
+        load_dotenv()
+        _google_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+    config_kwargs: dict = {
+        "max_output_tokens": max_tokens,
+        "response_mime_type": "application/json",
+        "response_json_schema": schema.model_json_schema(),
+    }
+    if system:
+        config_kwargs["system_instruction"] = system
+
+    response = _google_client.models.generate_content(
+        model=model,
+        contents=user_message,
+        config=types.GenerateContentConfig(**config_kwargs),
+    )
+    return schema.model_validate_json(response.text)
+
+
+def _complete_structured_openai(
+    model: str, *, system: str, user_message: str, schema: type[T], max_tokens: int
+) -> T:
+    global _openai_client
+    from openai import OpenAI
+
+    if _openai_client is None:
+        load_dotenv()
+        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": user_message})
+
+    response = _openai_client.beta.chat.completions.parse(
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+        response_format=schema,
+    )
+    return response.choices[0].message.parsed
+
+
+def _complete_structured_anthropic(
+    model: str, *, system: str, user_message: str, schema: type[T], max_tokens: int
+) -> T:
+    global _anthropic_client
+    import anthropic
+
+    if _anthropic_client is None:
+        load_dotenv()
+        _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    tool_name = "structured_output"
+    tool = {
+        "name": tool_name,
+        "description": "Return the structured result.",
+        "input_schema": schema.model_json_schema(),
+    }
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": user_message}],
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": tool_name},
+    }
+    if system:
+        kwargs["system"] = system
+
+    response = _anthropic_client.messages.create(**kwargs)
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == tool_name:
+            return schema.model_validate(block.input)
+
+    raise ValueError("Anthropic structured output: no tool_use block returned")

@@ -39,7 +39,7 @@ class ReaderOutput:
                 logger.warning("Failed to generate digest summary", exc_info=True)
 
         title = f"Patronus {date_str}: {digest_summary.title}" if digest_summary else f"Patronus {date_str}"
-        tagline = digest_summary.tagline if digest_summary else ""
+        tagline = digest_summary.tagline if digest_summary else "A curated daily digest of research and reading."
 
         payload = json.dumps(
             {
