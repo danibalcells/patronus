@@ -357,7 +357,10 @@ def _complete_structured_google(
         contents=user_message,
         config=types.GenerateContentConfig(**config_kwargs),
     )
-    return schema.model_validate_json(response.text)
+    text = response.text
+    if not text or not text.strip():
+        raise ValueError(f"Empty response from Gemini for schema {schema.__name__}")
+    return schema.model_validate_json(text)
 
 
 def _complete_structured_openai(

@@ -6,8 +6,10 @@ from typing import Optional
 import anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 import patronus.llm as llm
+import patronus.observability as obs
 
 _client: Optional[anthropic.Anthropic] = None
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
@@ -70,16 +72,21 @@ def summarize_item(
     return response.content[0].text
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def summarize_digest(
     items: list[tuple[str, str]],
     *,
     model: str = _DIGEST_SUMMARY_MODEL,
 ) -> DigestSummary:
     items_text = "\n".join(f"- {title}: {summary}" for title, summary in items)
-    return llm.complete_structured(
-        model,
-        system=_DIGEST_SYSTEM_PROMPT,
-        user_message=f"Today's digest items:\n\n{items_text}",
-        schema=DigestSummary,
-        max_tokens=1024,
-    )
+    user_message = f"Today's digest items:\n\n{items_text}"
+    with obs.llm_generation("summarize_digest", model=model, input={"system": _DIGEST_SYSTEM_PROMPT, "user": user_message}) as span:
+        result = llm.complete_structured(
+            model,
+            system=_DIGEST_SYSTEM_PROMPT,
+            user_message=user_message,
+            schema=DigestSummary,
+            max_tokens=512,
+        )
+        span.update(output=result.model_dump())
+        return result
