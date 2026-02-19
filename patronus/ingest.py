@@ -44,6 +44,7 @@ class _TweetHTMLParser(HTMLParser):
         super().__init__()
         self._parts: list[str] = []
         self._links: list[str] = []
+        self._current_href: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "br":
@@ -52,9 +53,17 @@ class _TweetHTMLParser(HTMLParser):
             href = dict(attrs).get("href")
             if href:
                 self._links.append(href)
+                self._current_href = href
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self._current_href = None
 
     def handle_data(self, data: str) -> None:
-        self._parts.append(data)
+        if self._current_href and data.endswith("\u2026"):
+            self._parts.append(self._current_href)
+        else:
+            self._parts.append(data)
 
     @property
     def text(self) -> str:
