@@ -112,7 +112,7 @@ You've completed a broad scan. Your job now is targeted gap-filling — focused 
 - Use search_similar with more specific queries for underrepresented areas.
 - Avoid repeating searches you've already done.
 
-This is where external tools earn their keep: you know what you need and can formulate targeted queries. Do not call submit_digest — it is not available in this phase.\
+Do not call submit_digest — it is not available in this phase. Assembly comes next. You must call a retrieval tool every iteration.\
 """
 
 
@@ -438,13 +438,25 @@ def plan_and_assemble(
                         continue
 
                 if not retrieval_calls and response.stop_reason == "end_turn":
-                    logger.warning("Agent stopped without calling any tools (iteration %d, phase %s).", iteration + 1, phase.value)
-                    iter_obs.update(output={"error": "stopped_without_tools"})
-                    run_obs.update(output={"error": "stopped_without_tools"})
-                    return Digest(
-                        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        mode="agent",
+                    if phase == Phase.ASSEMBLY:
+                        logger.warning("Agent stopped without calling any tools (iteration %d, phase %s).", iteration + 1, phase.value)
+                        iter_obs.update(output={"error": "stopped_without_tools"})
+                        run_obs.update(output={"error": "stopped_without_tools"})
+                        return Digest(
+                            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            mode="agent",
+                        )
+                    nudge = (
+                        f"You didn't call any tools in iteration {iteration + 1} ({phase.value} phase). "
+                        "submit_digest is not available yet — assembly comes later. "
+                        "You must call a retrieval tool to keep researching. "
+                        "If you feel you've exhausted useful searches, pick a different angle or a more specific query."
                     )
+                    logger.warning("Agent stopped without tools (iteration %d, phase %s) — nudging.", iteration + 1, phase.value)
+                    iter_obs.update(output={"warning": "stopped_without_tools_nudged"})
+                    messages.append(build_assistant_message_from_response(response))
+                    messages.append({"role": "user", "content": nudge})
+                    continue
 
                 results: dict[str, str] = {}
                 for tc in retrieval_calls:
