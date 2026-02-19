@@ -25,7 +25,7 @@ class ReaderOutput:
             return
 
         date_str = (digest.generated_at or "")[:10]
-        url = f"https://patronus.invalid/digest/{date_str.replace('-', '')}"
+        url = f"https://patronus.feed/digest/{date_str.replace('-', '')}"
         title = f"Patronus Daily Digest \u2014 {date_str}"
         html_content = format_digest_html(digest)
 
@@ -34,6 +34,7 @@ class ReaderOutput:
         if item_pairs:
             try:
                 summary = summarize_digest(item_pairs)
+                logger.info("Digest summary: %s", summary)
             except Exception:
                 logger.warning("Failed to generate digest summary", exc_info=True)
 
@@ -43,7 +44,7 @@ class ReaderOutput:
                 "title": title,
                 "html": html_content,
                 "author": "Patronus",
-                "category": "Patronus",
+                "category": "rss",
                 "summary": summary,
                 "image_url": _IMAGE_URL,
                 "location": "feed",

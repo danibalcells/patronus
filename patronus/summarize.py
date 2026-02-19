@@ -25,6 +25,7 @@ _DIGEST_SYSTEM_PROMPT = (
     "List the key topics as short comma-separated fragments, like: "
     "\"New Claude release, Zvi on the Pentagon, when to think without words, ...\". "
     "No sentences, no preamble, no filler. Just the fragments, ending with '...'."
+    ""
 )
 
 
@@ -72,5 +73,5 @@ def summarize_digest(
         model,
         system=_DIGEST_SYSTEM_PROMPT,
         user_message=f"Today's digest items:\n\n{items_text}",
-        max_tokens=256,
+        max_tokens=1000,
     )
