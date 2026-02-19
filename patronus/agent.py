@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from patronus.config import Config
@@ -22,38 +23,100 @@ from patronus.tools import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-ITERATION_PLANNING_PROMPT = """\
-You are the editorial agent for Patronus. You are mid-process assembling a daily digest. Before each round of tool calls, briefly reflect on where you are and what to do next.
+class Phase(Enum):
+    SCAN = "scan"
+    DEEP_DIVE = "deep_dive"
+    ASSEMBLY = "assembly"
 
-## If this is the first iteration (no searches yet)
 
-Start by brainstorming from the reader's context before planning any searches. Ask yourself:
-- Given what the reader has been working on and thinking about, what specific topics, papers, events, or discussions would be most valuable to find?
-- Are there any named projects, themes, researchers, or ideas in their context that suggest concrete search angles?
-- What would make today's digest feel personally relevant rather than generic?
+def get_phase(iteration: int, max_iterations: int) -> Phase:
+    scan_end = max_iterations // 3
+    deep_dive_end = 2 * max_iterations // 3
+    if iteration < scan_end:
+        return Phase.SCAN
+    elif iteration < deep_dive_end:
+        return Phase.DEEP_DIVE
+    else:
+        return Phase.ASSEMBLY
 
-List 3-5 concrete hypotheses — specific things you'd hope to find. Then plan your searches to test them.
 
-## On subsequent iterations
+SCAN_PLANNING_PROMPT = """\
+You are in the SCAN phase of digest assembly. Your goal is to build a mental map of what's in the content pool — not to select items or commit to anything.
 
-Your reflection should cover:
+Before planning your searches, reflect:
+- What does the reader's context suggest about where to look? What topics, domains, or specific themes should you probe?
+- List 2-3 concrete angles for broad searches.
 
-1. **What you've found so far** — any strong candidates? notable gaps? anything surprising?
-2. **What to do this round** — which tool(s) and what query/parameters, and why. Be specific.
-3. **Readiness check** — do you have enough to submit a good digest, or do you need more searches?
+Then plan broad, high-N searches (aim for n=20-30) to cover:
+- Recent content (last 3 and 7 days)
+- Semantic similarity to the reader's interests (multiple queries)
+- Specific source types (e.g., Twitter/social chatter, RSS feeds)
+- Any external sources (OpenAlex, Arxiv, Notion) if the reader's context points to specific domains
 
-## Key principles
-
-- **Let structure emerge.** Don't commit to a section lineup before you've searched. The digest shape should follow from what's actually available, not from an upfront plan.
-- **Adjust as you go.** Each round reveals more about the content pool. If a section type isn't yielding good content, drop it rather than forcing it.
-- **Know when to stop.** If you have strong candidates across a few sections, a tight digest beats a bloated one. Don't search indefinitely.
-- **Avoid redundancy.** If you've already searched a topic or tool+query combination, don't repeat it — move on to unexplored angles.
-
-Be concise. Name specific tools and queries. This is internal reasoning only.\
+Do NOT think about sections or summaries yet. Just explore and observe. Be concise — name specific tools and queries.\
 """
 
 
-SYSTEM_PROMPT = """\
+DEEP_DIVE_PLANNING_PROMPT = """\
+You are in the DEEP DIVE phase of digest assembly. You've completed a broad scan. Now do targeted gap-filling based on what you found.
+
+Briefly reflect:
+- What topic areas had strong content in the scan? What was thin or missing?
+- What would the reader most want that you haven't found yet?
+- Are there personal notes (Notion) that might connect to the strongest candidates from the scan?
+
+Plan 1-3 targeted searches. Prefer external tools (search_arxiv, search_openalex, search_notion) when you need to fill specific gaps. Use specific concept queries, not broad topic words. Avoid repeating searches you've already done.
+
+Be concise — name specific tools and queries.\
+"""
+
+
+ASSEMBLY_PLANNING_PROMPT = """\
+You are in the ASSEMBLY phase of digest assembly. You've scanned broadly and filled gaps. Now make editorial decisions and produce the final digest.
+
+Your reflection should cover:
+
+1. **What you've found** — your strongest candidates across section types. What's the standout long-form pick? Which papers are worth a roundup? What headlines or chatter items?
+2. **What to include** — finalize your selections. Drop any section where you don't have strong content. A tight digest beats a padded one.
+3. **Readiness check** — if you have strong candidates across enough sections, call submit_digest now. Don't search further unless there's a specific gap you can close in one targeted query.
+
+Be concise. If you're ready, say so and call submit_digest.\
+"""
+
+
+SCAN_SYSTEM_PROMPT = """\
+You are the editorial agent for Patronus, a personal research and reading assistant.
+
+## Your role right now: SCAN
+
+Your job in this phase is to build a mental map of the content pool. Do NOT make editorial selections. Do NOT think about sections or summaries. Just explore broadly and observe what's available.
+
+- Use broad searches with high result counts (n=20-30 where possible).
+- Cover recent content, semantic similarity to the reader's interests, different source types and channels.
+- You can use any available retrieval tool — local search, Arxiv, OpenAlex, Notion — if the reader's context points to specific domains.
+- After your searches, your internal state should include: which topic areas have strong content, which are thin, what's surprisingly interesting.
+
+You are building a picture. Selection and summarization come later. Do not call submit_digest — it is not available in this phase.\
+"""
+
+
+DEEP_DIVE_SYSTEM_PROMPT = """\
+You are the editorial agent for Patronus, a personal research and reading assistant.
+
+## Your role right now: DEEP DIVE
+
+You've completed a broad scan. Your job now is targeted gap-filling — focused searches to find content for areas that were thin, or to enrich the strongest candidates you identified.
+
+- Run targeted queries using search_arxiv, search_openalex, or search_notion based on what the scan revealed and what the reader's context suggests.
+- Use search_notion with specific concept queries based on the strongest candidates from your scan — look for personal notes that connect.
+- Use search_similar with more specific queries for underrepresented areas.
+- Avoid repeating searches you've already done.
+
+This is where external tools earn their keep: you know what you need and can formulate targeted queries. Do not call submit_digest — it is not available in this phase.\
+"""
+
+
+ASSEMBLY_SYSTEM_PROMPT = """\
 You are the editorial agent for Patronus, a personal research and reading assistant. Your job is to assemble a daily digest — a curated selection of the most interesting and relevant content for the reader, structured like a newspaper.
 
 ## Your role
@@ -73,8 +136,6 @@ Your digest is organized into sections. Not all sections appear every day — th
 
 ## Guidelines
 
-- Use the retrieval tools to explore what's available. You can search by similarity, recency, topic, or source.
-- Use `search_notion` to check whether the reader has written anything relevant to the strongest items you've found. Search with specific concept queries, not broad topic words.
 - Use the reader's context to decide what's most relevant RIGHT NOW — not just generally interesting.
 - Each item needs a summary appropriate to its section type:
   - long_form_pick: 2-3 sentences for the featured pick; 1-2 sentences for the others
@@ -87,7 +148,7 @@ Your digest is organized into sections. Not all sections appear every day — th
 - Don't include items that are very similar to each other. Diversity matters.
 - If there isn't enough good content for a section type, skip it entirely. A digest with 3 excellent sections beats 5 mediocre ones.
 - **Recency matters.** Each item has a `Date` field — use it. Old content (more than 7 days) must not appear in `headlines`. If an older article is genuinely worth surfacing, place it in `long_form_pick` or `serendipity` and frame it as a recommendation, not as news.
-- When you've finished exploring and have strong candidates, call submit_digest with the final digest.
+- When you've finished selecting and writing summaries, call submit_digest with the final digest.
 
 IMPORTANT: You must call submit_digest exactly once to deliver the final digest. Do not output the digest as plain text.\
 """
@@ -161,6 +222,18 @@ SUBMIT_DIGEST_TOOL: dict[str, Any] = {
     },
 }
 
+_PHASE_SYSTEM_PROMPTS: dict[Phase, str] = {
+    Phase.SCAN: SCAN_SYSTEM_PROMPT,
+    Phase.DEEP_DIVE: DEEP_DIVE_SYSTEM_PROMPT,
+    Phase.ASSEMBLY: ASSEMBLY_SYSTEM_PROMPT,
+}
+
+_PHASE_PLANNING_PROMPTS: dict[Phase, str] = {
+    Phase.SCAN: SCAN_PLANNING_PROMPT,
+    Phase.DEEP_DIVE: DEEP_DIVE_PLANNING_PROMPT,
+    Phase.ASSEMBLY: ASSEMBLY_PLANNING_PROMPT,
+}
+
 
 def _parse_submit_digest(input_data: dict) -> Digest:
     sections: list[DigestSection] = []
@@ -195,6 +268,7 @@ def _parse_submit_digest(input_data: dict) -> Digest:
 def _build_iteration_planning_message(
     iteration: int,
     max_iterations: int,
+    phase: Phase,
     search_history: list[str],
     context_prose: str,
 ) -> str:
@@ -202,10 +276,16 @@ def _build_iteration_planning_message(
     return (
         f"Reader context:\n{context_prose}\n\n"
         f"---\n\n"
-        f"Iteration {iteration + 1} of {max_iterations}.\n\n"
+        f"Phase: {phase.value.upper().replace('_', ' ')} | Iteration {iteration + 1} of {max_iterations}.\n\n"
         f"Searches completed so far:\n{history_str}\n\n"
-        "Reflect on what you've found and decide what to do in this iteration."
+        "Reflect on where you are and what to do in this iteration."
     )
+
+
+def _get_tools_for_phase(phase: Phase, retrieval_definitions: list[dict]) -> list[dict]:
+    if phase == Phase.ASSEMBLY:
+        return retrieval_definitions + [SUBMIT_DIGEST_TOOL]
+    return retrieval_definitions
 
 
 def plan_and_assemble(
@@ -218,7 +298,7 @@ def plan_and_assemble(
         raise ValueError("AgentConfig is required for agent mode.")
 
     planning_model = agent_config.planning_model or agent_config.model
-    all_tools = tool_registry.get_definitions() + [SUBMIT_DIGEST_TOOL]
+    retrieval_definitions = tool_registry.get_definitions()
 
     today_str = datetime.now(timezone.utc).strftime("%A, %d %B %Y")
     initial_user_message = (
@@ -226,44 +306,58 @@ def plan_and_assemble(
         "Here is the reader's current context — their recent intellectual activity, "
         "interests, and what they've been working on:\n\n"
         f"{context.prose}\n\n"
-        "Explore the content pool using the available search tools and assemble a digest. "
-        "Let the structure emerge from what you find — don't commit to a section lineup "
-        "before searching. Call submit_digest when you have strong candidates."
+        "Explore the content pool using the available search tools. Start broad, then go deep, "
+        "then assemble the digest. Let the structure emerge from what you find."
     )
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": initial_user_message},
     ]
     search_history: list[str] = []
+    prev_phase: Phase | None = None
 
     with agent_run(
         "agent-digest-run",
         {
-            "system_prompt": SYSTEM_PROMPT,
-            "iteration_planning_prompt": ITERATION_PLANNING_PROMPT,
             "context_prose": context.prose,
             "model": agent_config.model,
             "planning_model": planning_model,
         },
     ) as run_obs:
         for iteration in range(agent_config.max_iterations):
-            logger.info("Agent iteration %d/%d", iteration + 1, agent_config.max_iterations)
+            phase = get_phase(iteration, agent_config.max_iterations)
 
-            with iteration_span(f"iteration-{iteration + 1}") as iter_obs:
+            if phase != prev_phase:
+                logger.info(
+                    "Phase transition: %s → %s (iteration %d/%d)",
+                    prev_phase.value if prev_phase else "start",
+                    phase.value,
+                    iteration + 1,
+                    agent_config.max_iterations,
+                )
+                prev_phase = phase
+
+            system_prompt = _PHASE_SYSTEM_PROMPTS[phase]
+            planning_prompt = _PHASE_PLANNING_PROMPTS[phase]
+            tools_for_phase = _get_tools_for_phase(phase, retrieval_definitions)
+
+            logger.info("Agent iteration %d/%d [%s]", iteration + 1, agent_config.max_iterations, phase.value)
+
+            with iteration_span(f"iteration-{iteration + 1}", input={"phase": phase.value}) as iter_obs:
                 planning_user_message = _build_iteration_planning_message(
-                    iteration, agent_config.max_iterations, search_history, context.prose,
+                    iteration, agent_config.max_iterations, phase, search_history, context.prose,
                 )
                 with planning_generation(
                     "planning",
                     planning_model,
                     [
-                        {"role": "system", "content": ITERATION_PLANNING_PROMPT},
+                        {"role": "system", "content": planning_prompt},
                         {"role": "user", "content": planning_user_message},
                     ],
                 ) as plan_obs:
                     thought = complete(
                         planning_model,
-                        system=ITERATION_PLANNING_PROMPT,
+                        system=planning_prompt,
                         user_message=planning_user_message,
                         max_tokens=512,
                     )
@@ -273,7 +367,7 @@ def plan_and_assemble(
                 messages.append({
                     "role": "user",
                     "content": (
-                        f"[Reflection, iteration {iteration + 1}/{agent_config.max_iterations}]\n\n"
+                        f"[{phase.value.upper().replace('_', ' ')} — iteration {iteration + 1}/{agent_config.max_iterations}]\n\n"
                         f"{thought}"
                     ),
                 })
@@ -281,13 +375,13 @@ def plan_and_assemble(
                 with llm_generation(
                     "llm-call",
                     agent_config.model,
-                    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                    [{"role": "system", "content": system_prompt}] + messages,
                 ) as gen_obs:
                     response: LLMResponse = complete_with_tools(
                         agent_config.model,
-                        system=SYSTEM_PROMPT,
+                        system=system_prompt,
                         messages=messages,
-                        tools=all_tools,
+                        tools=tools_for_phase,
                         max_tokens=agent_config.max_tokens,
                     )
                     gen_obs.update(output={
@@ -300,13 +394,13 @@ def plan_and_assemble(
                 retrieval_calls = []
 
                 for tc in response.tool_calls:
-                    if tc.name == "submit_digest":
+                    if tc.name == "submit_digest" and phase == Phase.ASSEMBLY:
                         submit_call = tc
                     else:
                         retrieval_calls.append(tc)
 
                 if submit_call is not None:
-                    logger.info("Agent submitted digest on iteration %d", iteration + 1)
+                    logger.info("Agent submitted digest on iteration %d [assembly]", iteration + 1)
                     try:
                         digest = _parse_submit_digest(submit_call.input)
                         logger.info(
@@ -319,6 +413,7 @@ def plan_and_assemble(
                             "items": digest.item_count,
                             "section_types": [s.type.value for s in digest.sections],
                             "iterations_used": iteration + 1,
+                            "phase": phase.value,
                         }
                         iter_obs.update(output=digest_summary)
                         run_obs.update(output=format_digest(digest))
@@ -334,9 +429,9 @@ def plan_and_assemble(
                         continue
 
                 if not retrieval_calls and response.stop_reason == "end_turn":
-                    logger.warning("Agent stopped without calling submit_digest.")
-                    iter_obs.update(output={"error": "stopped_without_submit"})
-                    run_obs.update(output={"error": "stopped_without_submit"})
+                    logger.warning("Agent stopped without calling any tools (iteration %d, phase %s).", iteration + 1, phase.value)
+                    iter_obs.update(output={"error": "stopped_without_tools"})
+                    run_obs.update(output={"error": "stopped_without_tools"})
                     return Digest(
                         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         mode="agent",
@@ -360,6 +455,7 @@ def plan_and_assemble(
 
                 iter_obs.update(output={
                     "thought": thought,
+                    "phase": phase.value,
                     "tool_calls_made": [tc.name for tc in retrieval_calls],
                 })
 
