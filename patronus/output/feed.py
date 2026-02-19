@@ -114,7 +114,7 @@ def _format_item_html(item: DigestItem) -> str:
     return "\n".join(parts)
 
 
-def _format_digest_html(digest: Digest) -> str:
+def format_digest_html(digest: Digest) -> str:
     parts: list[str] = []
 
     date_str = digest.generated_at[:10] if digest.generated_at else "unknown"
@@ -143,7 +143,7 @@ def _build_rss_item(digest: Digest, item_link: str = "") -> ET.Element:
     ET.SubElement(item, "title").text = f"Patronus Digest \u2014 {date_str}"
     if item_link:
         ET.SubElement(item, "link").text = item_link
-    ET.SubElement(item, "description").text = _format_digest_html(digest)
+    ET.SubElement(item, "description").text = format_digest_html(digest)
 
     now = datetime.now(timezone.utc)
     ET.SubElement(item, "pubDate").text = format_rfc2822(now)

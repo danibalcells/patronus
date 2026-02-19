@@ -9,6 +9,7 @@ from patronus import setup_logging
 from patronus.config import load_config
 from patronus.db import Database
 from patronus.output.feed import FeedOutput
+from patronus.output.reader import ReaderOutput
 from patronus.output.telegram import TelegramOutput
 from patronus.output.terminal import TerminalOutput
 from patronus.pipeline import DigestPipeline
@@ -22,6 +23,7 @@ def main() -> None:
     parser.add_argument("--force-notion-refresh", action="store_true", help="Force refresh Notion context, bypassing cache")
     parser.add_argument("--feed", action="store_true", help="Upload digest to RSS feed on R2")
     parser.add_argument("--feed-tag", type=str, default="", help="Tag for the RSS feed file (e.g. 'test1' → feed-test1.xml)")
+    parser.add_argument("--reader", action="store_true", help="Deliver digest to Readwise Reader")
     args = parser.parse_args()
 
     setup_logging()
@@ -36,6 +38,9 @@ def main() -> None:
 
     if args.feed:
         outputs.append(FeedOutput(tag=args.feed_tag or None))
+
+    if args.reader:
+        outputs.append(ReaderOutput())
 
     with Database(db_path=args.db) as db:
         pipeline = DigestPipeline(config, db, outputs=outputs)

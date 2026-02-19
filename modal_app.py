@@ -28,6 +28,7 @@ def send_digest(tag: str = ""):
     from patronus.config import load_config
     from patronus.db import Database
     from patronus.output.feed import FeedOutput
+    from patronus.output.reader import ReaderOutput
     from patronus.output.terminal import TerminalOutput
     from patronus.pipeline import DigestPipeline
 
@@ -36,7 +37,7 @@ def send_digest(tag: str = ""):
     if config.notion:
         config.notion.mirror_path = f"{VOLUME_DIR}/notion_mirror.sqlite3"
 
-    outputs = [TerminalOutput(), FeedOutput(tag=tag or None)]
+    outputs = [TerminalOutput(), FeedOutput(tag=tag or None), ReaderOutput()]
 
     with Database(db_path=f"{VOLUME_DIR}/db.sqlite3") as db:
         pipeline = DigestPipeline(config, db, outputs=outputs)
