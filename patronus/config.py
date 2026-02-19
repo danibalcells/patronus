@@ -34,6 +34,7 @@ class AgentConfig:
     max_iterations: int = 10
     max_tokens: int = 4096
     planning_model: str = ""
+    assembly_model: str = ""
 
 
 @dataclass

@@ -28,7 +28,7 @@ class ReaderOutput:
         url = f"https://patronus.feed/digest/{date_str.replace('-', '')}"
         html_content = format_digest_html(digest)
 
-        item_pairs = [(item.title, item.summary) for item in digest.items if item.title]
+        item_pairs = [(item.title, item.summary) for item in digest.all_items if item.title]
         digest_summary = None
         if item_pairs:
             try:

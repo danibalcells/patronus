@@ -15,10 +15,10 @@ summarization:
   model: "claude-haiku-4-5-20251001"
 
 agent:
-  # model: "anthropic/claude-haiku-4-5-20251001"
-  model: "anthropic/claude-sonnet-4-5-20250929"
-  # planning_model: "anthropic/claude-haiku-4-5-20251001"
+  model: "anthropic/claude-haiku-4-5-20251001"        # scan + deep dive
+  # model: "anthropic/claude-sonnet-4-5-20250929"
   planning_model: "anthropic/claude-sonnet-4-5-20250929"
+  assembly_model: "anthropic/claude-sonnet-4-5-20250929"
   max_iterations: 7
   max_tokens: 5000
 

@@ -359,6 +359,7 @@ def plan_and_assemble(
         raise ValueError("AgentConfig is required for agent mode.")
 
     planning_model = agent_config.planning_model or agent_config.model
+    assembly_model = agent_config.assembly_model or agent_config.model
     retrieval_definitions = tool_registry.get_definitions()
 
     today_str = datetime.now(timezone.utc).strftime("%A, %d %B %Y")
@@ -383,6 +384,7 @@ def plan_and_assemble(
             "context_prose": context.prose,
             "model": agent_config.model,
             "planning_model": planning_model,
+            "assembly_model": assembly_model,
         },
     ) as run_obs:
         for iteration in range(agent_config.max_iterations):
@@ -439,13 +441,14 @@ def plan_and_assemble(
                     ),
                 })
 
+                iteration_model = assembly_model if phase == Phase.ASSEMBLY else agent_config.model
                 with llm_generation(
                     "llm-call",
-                    agent_config.model,
+                    iteration_model,
                     [{"role": "system", "content": system_prompt}] + messages,
                 ) as gen_obs:
                     response: LLMResponse = complete_with_tools(
-                        agent_config.model,
+                        iteration_model,
                         system=system_prompt,
                         messages=messages,
                         tools=tools_for_phase,
