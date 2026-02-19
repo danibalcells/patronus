@@ -721,6 +721,120 @@ class TestSearchArxiv:
         db.close()
 
 
+def _add_item_to_digests(db: Database, item_id: str, count: int) -> None:
+    for _ in range(count):
+        db.save_digest(
+            generated_at="2026-02-01T08:00:00Z",
+            item_count=1,
+            formatted_text=None,
+            items=[{"item_id": item_id, "summary": "s", "score": 1.0, "matched_topic": ""}],
+        )
+
+
+class TestSearchSimilarDigestFilter:
+    @patch("patronus.tools.local.embed_text")
+    def test_excludes_over_digested_items(self, mock_embed: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+
+        emb = _unit_vec(1.0, 0.0, 0.0)
+        fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
+                               text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
+        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
+                               text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
+        _add_item_to_digests(db, stale_id, 3)
+
+        mock_embed.return_value = emb
+        tool = SearchSimilar(config, db)
+        result = tool.execute(query="test")
+
+        ids = {item["id"] for item in result.items}
+        assert fresh_id in ids
+        assert stale_id not in ids
+        db.close()
+
+    @patch("patronus.tools.local.embed_text")
+    def test_includes_items_below_threshold(self, mock_embed: MagicMock, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+
+        emb = _unit_vec(1.0, 0.0, 0.0)
+        item_id = db.add_item(url="https://twice.com", source_type="rss", title="Twice",
+                              text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
+        _add_item_to_digests(db, item_id, 2)
+
+        mock_embed.return_value = emb
+        tool = SearchSimilar(config, db)
+        result = tool.execute(query="test")
+
+        assert any(item["id"] == item_id for item in result.items)
+        db.close()
+
+
+class TestSearchRecentDigestFilter:
+    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh", timestamp=ts)
+        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale", timestamp=ts)
+        _add_item_to_digests(db, stale_id, 3)
+
+        tool = SearchRecent(db)
+        result = tool.execute(days=3)
+
+        ids = {item["id"] for item in result.items}
+        assert fresh_id in ids
+        assert stale_id not in ids
+        db.close()
+
+
+class TestSearchByTopicDigestFilter:
+    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config()
+
+        fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
+                               timestamp="2026-02-15T00:00:00Z")
+        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
+                               timestamp="2026-02-15T00:00:00Z")
+        for iid in [fresh_id, stale_id]:
+            with db._session() as session:
+                item = session.get(Item, iid)
+                item.topic_cluster = "ml"
+                session.add(item)
+                session.commit()
+        _add_item_to_digests(db, stale_id, 3)
+
+        tool = SearchByTopic(config, db)
+        result = tool.execute(topic="ml")
+
+        ids = {item["id"] for item in result.items}
+        assert fresh_id in ids
+        assert stale_id not in ids
+        db.close()
+
+
+class TestSearchBySourceDigestFilter:
+    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+
+        fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
+                               timestamp="2026-02-15T00:00:00Z")
+        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
+                               timestamp="2026-02-15T00:00:00Z")
+        _add_item_to_digests(db, stale_id, 3)
+
+        tool = SearchBySource(db)
+        result = tool.execute(source_type="rss")
+
+        ids = {item["id"] for item in result.items}
+        assert fresh_id in ids
+        assert stale_id not in ids
+        db.close()
+
+
 class TestRegisterLocalTools:
     def test_registers_all_four_tools(self, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")

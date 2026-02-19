@@ -376,6 +376,14 @@ class Database:
                 ).all()
             )
 
+    def get_over_digested_item_ids(self, threshold: int = 3) -> set[str]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT item_id FROM digest_items GROUP BY item_id HAVING COUNT(*) >= :t"),
+                {"t": threshold},
+            ).fetchall()
+        return {row[0] for row in rows}
+
     # ------------------------------------------------------------------
     # Context Snapshots
     # ------------------------------------------------------------------
