@@ -266,10 +266,14 @@ def poll_feeds(
     *,
     limit: Optional[int] = None,
     feed_limit: Optional[int] = None,
+    feed_ids: list[str] | None = None,
     skip_embed: bool = False,
     workers: int = DEFAULT_WORKERS,
 ) -> list[str]:
     feeds = db.get_active_feeds()
+    if feed_ids is not None:
+        id_set = set(feed_ids)
+        feeds = [f for f in feeds if f.id in id_set]
     if feed_limit is not None:
         feeds = feeds[:feed_limit]
     if not feeds:

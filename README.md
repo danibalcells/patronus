@@ -68,7 +68,9 @@ patronus/
 scripts/
 ├── poll_feeds.py           # Cron: poll all active feeds
 ├── send_digest.py          # Cron: generate and deliver digest
-├── seed_feeds.py           # One-off: seed DB from a feeds file
+├── add_feeds.py            # One-off: add feed URL(s) to Modal DB and poll them
+├── list_feeds.py           # One-off: print all feeds in the local DB
+├── seed_feeds.py           # One-off: seed DB from a feeds file (bootstrap only)
 ├── run_bot.py              # Systemd: Telegram bot (long-running)
 ├── sync_notion_mirror.py   # Nightly: sync Notion DBs to local mirror
 └── test_notion_context.py  # Manual: fetch and print Notion context
@@ -160,7 +162,20 @@ Restart=on-failure
 --force-notion-refresh   # bypass Notion context cache
 --feed                   # publish to RSS feed on R2
 --reader                 # send to Readwise Reader
+
+# add_feeds.py — runs ingestion on Modal, then syncs local DB
+python scripts/add_feeds.py https://example.com/feed https://other.com/rss
+python scripts/add_feeds.py --file feeds.txt   # one URL per line
+python scripts/add_feeds.py https://... --no-sync  # skip local DB download
+
+# list_feeds.py — inspect the local DB
+python scripts/list_feeds.py
+python scripts/list_feeds.py --all  # include inactive feeds
 ```
+
+> Feed URLs are stored in the database only. The `feeds` file no longer exists;
+> use `scripts/list_feeds.py` to inspect what's in the DB and `scripts/add_feeds.py`
+> to add new ones.
 
 ## Dependency graph
 

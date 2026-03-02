@@ -95,6 +95,40 @@ def sync_notion():
     volume.commit()
 
 
+@app.function(
+    image=image,
+    volumes={VOLUME_DIR: volume},
+    secrets=SECRETS,
+    timeout=600,
+)
+def add_feeds(urls: list[str]) -> dict[str, int]:
+    from patronus import setup_logging
+    from patronus.db import Database
+    from patronus.ingest import poll_feeds as _poll
+
+    setup_logging()
+
+    with Database(db_path=f"{VOLUME_DIR}/db.sqlite3") as db:
+        feed_ids: list[str] = []
+        added = 0
+        for url in urls:
+            existing = db.get_feed_by_url(url)
+            if existing:
+                print(f"Feed already in DB, will poll: {url}")
+                feed_ids.append(existing.id)
+            else:
+                feed_id = db.add_feed(url=url)
+                print(f"Added feed: {url}")
+                feed_ids.append(feed_id)
+                added += 1
+
+        ids = _poll(db, feed_ids=feed_ids, workers=4)
+        print(f"Added {added} new feed(s), ingested {len(ids)} new item(s)")
+
+    volume.commit()
+    return {"added": added, "ingested": len(ids)}
+
+
 @app.local_entrypoint()
 def main(job: str = "digest", tag: str = ""):
     if job == "digest":

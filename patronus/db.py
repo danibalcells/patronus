@@ -287,6 +287,12 @@ class Database:
                 ).all()
             )
 
+    def get_all_feeds(self) -> list[Feed]:
+        with self._session() as session:
+            return list(
+                session.exec(select(Feed).order_by(Feed.active.desc(), Feed.name)).all()
+            )
+
     def update_feed_poll(
         self,
         feed_id: str,
