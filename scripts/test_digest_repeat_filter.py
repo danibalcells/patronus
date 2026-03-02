@@ -20,22 +20,21 @@ REPEATED_PAPER = {
 
 FRESH_PAPERS_BY_RUN: list[list[dict]] = [
     [
-        {"url": "https://arxiv.org/abs/2402.00001", "title": "Run 1 — Paper A", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
-        {"url": "https://arxiv.org/abs/2402.00002", "title": "Run 1 — Paper B", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2402.00001", "title": "Run 1 — Paper A (15 days ago)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2402.00002", "title": "Run 1 — Paper B (15 days ago)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
     ],
     [
-        {"url": "https://arxiv.org/abs/2403.00001", "title": "Run 2 — Paper C", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
-        {"url": "https://arxiv.org/abs/2403.00002", "title": "Run 2 — Paper D", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2403.00001", "title": "Run 2 — Paper C (45 days ago, outside window)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2403.00002", "title": "Run 2 — Paper D (45 days ago, outside window)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
     ],
     [
-        {"url": "https://arxiv.org/abs/2404.00001", "title": "Run 3 — Paper E", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
-        {"url": "https://arxiv.org/abs/2404.00002", "title": "Run 3 — Paper F", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
-    ],
-    [
-        {"url": "https://arxiv.org/abs/2405.00001", "title": "Run 4 — Paper G (fresh)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
-        {"url": "https://arxiv.org/abs/2405.00002", "title": "Run 4 — Paper H (fresh)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2405.00001", "title": "Run 3 — Paper E (fresh)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
+        {"url": "https://arxiv.org/abs/2405.00002", "title": "Run 3 — Paper F (fresh)", "source": "arxiv", "source_type": "arxiv_search", "item_type": "paper"},
     ],
 ]
+
+# days_ago for each simulated digest
+DIGEST_AGES = [15, 45, 0]
 
 
 def _add_paper(db: Database, paper: dict, ts: str) -> str:
@@ -76,77 +75,75 @@ def main() -> None:
                 run_ids = [_add_paper(db, p, now_ts) for p in run_papers]
                 all_fresh_ids.append(run_ids)
 
+            print(f"  Rule: items digested within the last 30 days are excluded from searches.")
             print(f"  Repeated paper id : {repeated_id}")
             print(f"  Repeated paper url: {REPEATED_PAPER['url']}")
 
-            for run_num in range(1, 5):
-                _section(f"Run {run_num}")
+            for run_num in range(1, 4):
+                days_ago = DIGEST_AGES[run_num - 1]
+                generated_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 fresh_ids = all_fresh_ids[run_num - 1]
                 fresh_titles = [FRESH_PAPERS_BY_RUN[run_num - 1][i]["title"] for i in range(len(fresh_ids))]
 
-                if run_num < 4:
-                    digest_ids = [repeated_id] + fresh_ids
-                    generated_at = (datetime.now(timezone.utc) - timedelta(days=4 - run_num)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    items = [{"item_id": iid, "summary": "", "score": 1.0, "matched_topic": "ml"} for iid in digest_ids]
-                    db.save_digest(generated_at=generated_at, item_count=len(items), formatted_text=None, items=items)
+                _section(f"Run {run_num}  (digest was {days_ago} days ago — {'within' if days_ago < 30 else 'outside'} 30-day window)")
 
-                    over = db.get_over_digested_item_ids()
-                    repeat_count = run_num
-                    blocked = repeated_id in over
+                digest_ids = [repeated_id] + fresh_ids
+                items = [{"item_id": iid, "summary": "", "score": 1.0, "matched_topic": "ml"} for iid in digest_ids]
+                db.save_digest(generated_at=generated_at, item_count=len(items), formatted_text=None, items=items)
 
-                    print(f"\n  Digest saved. Included items:")
-                    print(f"    • {REPEATED_PAPER['title']}  ← repeat paper (appearance #{repeat_count})")
-                    for t in fresh_titles:
-                        print(f"    • {t}")
-                    print()
-                    if blocked:
-                        print(f"  ⚑  Repeat paper has now appeared in {repeat_count} digests → BLOCKED from future runs")
-                    else:
-                        print(f"  ✓  Repeat paper has appeared in {repeat_count}/3 digests → still eligible")
+                recently_digested = db.get_recently_digested_item_ids()
+                repeat_blocked = repeated_id in recently_digested
 
+                print(f"\n  Digest saved (generated_at={generated_at}). Included items:")
+                print(f"    • {REPEATED_PAPER['title']}  ← repeat paper")
+                for t in fresh_titles:
+                    print(f"    • {t}")
+                print()
+                if repeat_blocked:
+                    print(f"  ⚑  Repeat paper is within the 30-day window → BLOCKED from current searches")
                 else:
-                    print(f"\n  Simulating agent search calls...")
-                    print(f"\n  Fresh papers available this run:")
-                    for t in fresh_titles:
-                        print(f"    • {t}")
+                    print(f"  ✓  Repeat paper's digest is older than 30 days → eligible again")
 
-                    over = db.get_over_digested_item_ids()
-                    print(f"\n  Items currently blocked (3+ appearances): {len(over)}")
-                    print(f"  Repeat paper blocked? {'YES' if repeated_id in over else 'NO'}")
+            _section("Run 4 — search results (repeat paper was last digested 15 days ago → should be excluded)")
 
-                    print()
-                    _hr()
-                    print("  SearchRecent results (days=365, n=50):")
-                    _hr()
-                    result = SearchRecent(db).execute(days=365, n=50)
-                    found_repeat = False
-                    for item in result.items:
-                        marker = "  ← REPEAT PAPER (should be absent!)" if item["id"] == repeated_id else ""
-                        if item["id"] == repeated_id:
-                            found_repeat = True
-                        print(f"    • {item['title']}{marker}")
+            recently_digested = db.get_recently_digested_item_ids()
+            print(f"\n  Items blocked (digested in last 30 days): {len(recently_digested)}")
+            print(f"  Repeat paper blocked? {'YES' if repeated_id in recently_digested else 'NO'}")
 
-                    print()
-                    _hr()
-                    print("  SearchBySource(source_name='arxiv') results (n=50):")
-                    _hr()
-                    result2 = SearchBySource(db).execute(source_name="arxiv", n=50)
-                    found_repeat2 = False
-                    for item in result2.items:
-                        marker = "  ← REPEAT PAPER (should be absent!)" if item["id"] == repeated_id else ""
-                        if item["id"] == repeated_id:
-                            found_repeat2 = True
-                        print(f"    • {item['title']}{marker}")
+            print()
+            _hr()
+            print("  SearchRecent results (days=365, n=50):")
+            _hr()
+            result = SearchRecent(db).execute(days=365, n=50)
+            found_repeat = False
+            for item in result.items:
+                marker = "  ← REPEAT PAPER (should be absent!)" if item["id"] == repeated_id else ""
+                if item["id"] == repeated_id:
+                    found_repeat = True
+                print(f"    • {item['title']}{marker}")
 
-                    print()
-                    _hr("═")
-                    if not found_repeat and not found_repeat2:
-                        print("  PASS  Repeat paper correctly excluded from all Run 4 search results.")
-                    else:
-                        failures = [name for name, found in [("SearchRecent", found_repeat), ("SearchBySource", found_repeat2)] if found]
-                        print(f"  FAIL  Repeat paper still appeared in: {', '.join(failures)}")
-                    _hr("═")
-                    print()
+            print()
+            _hr()
+            print("  SearchBySource(source_name='arxiv') results (n=50):")
+            _hr()
+            result2 = SearchBySource(db).execute(source_name="arxiv", n=50)
+            found_repeat2 = False
+            for item in result2.items:
+                marker = "  ← REPEAT PAPER (should be absent!)" if item["id"] == repeated_id else ""
+                if item["id"] == repeated_id:
+                    found_repeat2 = True
+                print(f"    • {item['title']}{marker}")
+
+            print()
+            _hr("═")
+            if not found_repeat and not found_repeat2:
+                print("  PASS  Repeat paper (digested 15 days ago) correctly excluded from Run 4 searches.")
+                print("  NOTE  Papers from Run 2 (45 days ago) ARE included — outside the 30-day window.")
+            else:
+                failures = [name for name, found in [("SearchRecent", found_repeat), ("SearchBySource", found_repeat2)] if found]
+                print(f"  FAIL  Repeat paper still appeared in: {', '.join(failures)}")
+            _hr("═")
+            print()
 
 
 if __name__ == "__main__":

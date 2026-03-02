@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from patronus.config import Config, DigestConfig, EmbeddingConfig, NotionConfig, PollingConfig, SummarizationConfig, TelegramConfig
+from patronus.config import Config, DigestConfig, EmbeddingConfig, NotionConfig, PollingConfig, TelegramConfig
 from patronus.context import Context, PersonalizationSource, merge_sources
 
 
@@ -11,7 +11,6 @@ def _make_config(**overrides: object) -> Config:
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={},
     )

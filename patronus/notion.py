@@ -20,6 +20,7 @@ from tenacity import (
 from patronus.config import Config
 from patronus.db import Database
 from patronus.llm import complete
+from patronus.observability import iteration_span, llm_generation
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +147,17 @@ state explicitly. Multiple job application entries → actively job searching. R
 mentions of a city → possibly relocating. Frequent references to a person → important \
 relationship. These contextual signals dramatically affect what content is relevant.
 
-Creative and emotional undertones — Poems, metaphors, recurring images, emotional \
-processing in journal entries. These reveal deeper preoccupations and aesthetic \
-sensibilities that matter for serendipitous recommendations.
+Peripheral interests and dormant curiosities — Things that appear in the user's writing \
+but are NOT connected to their main lines of work: a book about consciousness highlighted \
+last week, a poem about language, a library highlight from a neuroscience paper, a \
+journal mention of an unrelated topic. List these explicitly and specifically — they are \
+the raw material for serendipitous recommendations. The point is to surface things that \
+a query-driven agent would never think to search for. Even one-off mentions count here.
+
+Recurring emotional undertones and themes — What keeps coming back in the journal? What \
+is the user frustrated about, excited about, uncertain about? What are poems about? What \
+mood or preoccupation runs through the recent entries? These inform editorial tone and \
+reveal what might resonate beyond the intellectual content.
 
 Connections across domains — Where do the user's different interests meet or create \
 tension? These intersection points are the highest-signal for recommendations.
@@ -166,7 +175,32 @@ job application, say "you're actively job searching" rather than listing each on
 in passing. Tools are incidental; the intellectual work is what matters.
 - Prioritize recent and recurring over one-off mentions.
 - If you notice something surprising or that doesn't fit the obvious patterns — include \
-it. Outliers are often the most valuable signal for recommendations."""
+it. Outliers are often the most valuable signal for recommendations.
+
+## Priority tiers
+
+Structure your output so that each theme or interest is tagged with one of these tiers:
+
+**PRIMARY** — current active technical work and main intellectual preoccupations. This is \
+what the reader is doing right now: active projects, open research questions being actively \
+pursued, core ideas under development. Use this tier for at most 2-3 things.
+
+**SECONDARY** — active interests that inform the reader's thinking but aren't the primary \
+work. These are things the reader cares about and engages with regularly, but they are not \
+the central thrust of current work (e.g., job search dynamics, AI policy, industry shifts \
+adjacent to their field).
+
+**PERIPHERAL** — dormant curiosities, creative practices, and side interests. These appear \
+in the reader's writing but are not connected to their main lines of work. Only surface when \
+there is a specific, concrete connection to something in the feed. Do not search proactively \
+for these.
+
+After the main context, add this note verbatim:
+"NOTE FOR DOWNSTREAM AGENTS: Allocate most attention to PRIMARY areas. Use SECONDARY areas \
+to contextualize news and industry developments. PERIPHERAL interests should not drive \
+research or long_form_pick selections — only surface them when there is a direct, concrete \
+hook in the content."\
+"""
 
 
 @dataclass
@@ -389,43 +423,49 @@ class NotionSource:
                 logger.info("Using cached Notion context (%d chars)", len(cached))
                 return cached
 
-        mirror_entries = self._get_entries_from_mirror(config)
-        if mirror_entries is not None:
-            entries = mirror_entries
-            source_label = "mirror"
-        else:
-            logger.info("Fetching Notion context via live API")
-            entries = fetch_notion_entries(
-                self._get_client(config), config, config.notion.lookback_days, self._data_source_ids
-            )
-            if len(entries) < config.notion.min_entries_threshold:
+        with iteration_span("notion-context-build", input={"force_refresh": force_refresh}) as span:
+            mirror_entries = self._get_entries_from_mirror(config)
+            if mirror_entries is not None:
+                entries = mirror_entries
+                source_label = "mirror"
+            else:
+                logger.info("Fetching Notion context via live API")
                 entries = fetch_notion_entries(
-                    self._get_client(config), config, config.notion.fallback_lookback_days, self._data_source_ids
+                    self._get_client(config), config, config.notion.lookback_days, self._data_source_ids
                 )
-            source_label = "API"
+                if len(entries) < config.notion.min_entries_threshold:
+                    entries = fetch_notion_entries(
+                        self._get_client(config), config, config.notion.fallback_lookback_days, self._data_source_ids
+                    )
+                source_label = "API"
 
-        if len(entries) < config.notion.min_entries_threshold:
-            logger.warning("Insufficient Notion entries (%d < %d), returning empty context",
-                         len(entries), config.notion.min_entries_threshold)
-            return ""
+            if len(entries) < config.notion.min_entries_threshold:
+                logger.warning("Insufficient Notion entries (%d < %d), returning empty context",
+                             len(entries), config.notion.min_entries_threshold)
+                span.update(output={"result": "insufficient_entries", "count": len(entries)})
+                return ""
 
-        logger.info("Building Notion context from %s (%d entries)", source_label, len(entries))
+            logger.info("Building Notion context from %s (%d entries)", source_label, len(entries))
+            span.update(input={"force_refresh": force_refresh, "source": source_label, "entry_count": len(entries)})
 
-        try:
-            summary = self._summarize_entries(entries, config)
-        except Exception:
-            logger.warning("Failed to generate fresh Notion summary", exc_info=True)
-            stale_cached = self._get_cached_context(config, allow_stale=True)
-            if stale_cached:
-                logger.info("Using stale cached Notion context as fallback (%d chars)", len(stale_cached))
-                return stale_cached
-            return ""
+            try:
+                summary = self._summarize_entries(entries, config)
+            except Exception:
+                logger.warning("Failed to generate fresh Notion summary", exc_info=True)
+                stale_cached = self._get_cached_context(config, allow_stale=True)
+                if stale_cached:
+                    logger.info("Using stale cached Notion context as fallback (%d chars)", len(stale_cached))
+                    span.update(output={"result": "stale_cache_fallback", "chars": len(stale_cached)})
+                    return stale_cached
+                span.update(output={"result": "error_no_fallback"})
+                return ""
 
-        if self._db is not None and summary:
-            self._db.save_context_snapshot("notion", summary)
-            logger.info("Saved fresh Notion context to cache (%d chars)", len(summary))
+            if self._db is not None and summary:
+                self._db.save_context_snapshot("notion", summary)
+                logger.info("Saved fresh Notion context to cache (%d chars)", len(summary))
 
-        return summary
+            span.update(output={"result": "fresh_summary", "chars": len(summary)})
+            return summary
 
     def get_interest_vectors(self, config: Config) -> dict[str, np.ndarray] | None:
         return None
@@ -451,17 +491,25 @@ class NotionSource:
         full_text = "\n\n---\n\n".join(prompt_parts)
         full_text = full_text[:_MAX_INPUT_CHARS]
 
+        model = config.agent.notion_context_model if config.agent else ""
         logger.info(
             "Summarizer input: %d entries, %d chars (%d chars after truncation), model: %s",
-            len(entries), sum(len(p) for p in prompt_parts), len(full_text), config.notion.summary_model,
+            len(entries), sum(len(p) for p in prompt_parts), len(full_text), model,
         )
 
-        return complete(
-            config.notion.summary_model,
-            system=_SUMMARY_SYSTEM_PROMPT,
-            user_message=full_text,
-            max_tokens=_SUMMARY_MAX_TOKENS,
-        )
+        with llm_generation(
+            "notion-context-summarize",
+            model,
+            {"system": _SUMMARY_SYSTEM_PROMPT, "user": full_text},
+        ) as obs:
+            result = complete(
+                model,
+                system=_SUMMARY_SYSTEM_PROMPT,
+                user_message=full_text,
+                max_tokens=_SUMMARY_MAX_TOKENS,
+            )
+            obs.update(output=result[:500] if result else "")
+            return result
 
 
 def _fetch_all_blocks(client: NotionClient, block_id: str) -> list[dict]:

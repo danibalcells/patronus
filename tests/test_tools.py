@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +13,6 @@ from patronus.config import (
     EmbeddingConfig,
     NotionConfig,
     PollingConfig,
-    SummarizationConfig,
     TelegramConfig,
     TopicConfig,
 )
@@ -43,7 +42,6 @@ def _make_config(**overrides: object) -> Config:
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="Technical AI/ML", description="ML research"),
@@ -414,12 +412,10 @@ FAKE_ENTRIES = [
 
 class TestSearchArxiv:
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_returns_results(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_returns_results(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES)
 
-        tool = SearchArxiv(config, db)
+        tool = SearchArxiv()
         result = tool.execute(query="transformer attention")
 
         assert len(result.items) == 2
@@ -429,155 +425,76 @@ class TestSearchArxiv:
         assert result.items[0]["item_type"] == "paper"
         assert result.items[0]["source"] == "arxiv"
         assert "transformer" in result.items[0]["snippet"].lower()
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_ingests_new_papers_into_db(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_result_id_is_canonical_url(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="attention")
-
-        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
-        assert ingested is not None
-        assert ingested.source_type == "arxiv_search"
-        assert ingested.item_type == "paper"
-        assert ingested.title == "Attention Is All You Need"
-        db.close()
+        tool = SearchArxiv()
+        result = tool.execute(query="attention")
+        assert result.items[0]["id"] == "https://arxiv.org/abs/2301.00001"
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_deduplicates_already_ingested_papers(self, mock_parse: MagicMock, tmp_path: object) -> None:
+    def test_does_not_write_to_db(self, mock_parse: MagicMock, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
         mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
-
-        tool = SearchArxiv(config, db)
-        result1 = tool.execute(query="attention")
-        result2 = tool.execute(query="attention")
-
-        assert len(result1.items) == 1
-        assert len(result2.items) == 1
-        assert "1 newly ingested" in result1.message
-        assert "0 newly ingested" in result2.message
+        SearchArxiv().execute(query="attention")
+        assert db.get_item_by_url("https://arxiv.org/abs/2301.00001") is None
         db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_no_embedding_by_default(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
-
-        with patch("patronus.tools.arxiv.embed_text") as mock_embed:
-            tool = SearchArxiv(config, db)
-            tool.execute(query="attention")
-            mock_embed.assert_not_called()
-
-        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
-        assert ingested is not None
-        assert ingested.embedding is None
-        db.close()
-
-    @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_embeds_when_flag_enabled(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-        mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
-
-        fake_embedding = np.ones(4, dtype=np.float32)
-        with patch("patronus.tools.arxiv.embed_text", return_value=fake_embedding):
-            tool = SearchArxiv(config, db, embed=True)
-            tool.execute(query="attention")
-
-        ingested = db.get_item_by_url("https://arxiv.org/abs/2301.00001")
-        assert ingested is not None
-        assert ingested.embedding is not None
-        db.close()
-
-    @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_empty_query_returns_error(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-        tool = SearchArxiv(config, db)
+    def test_empty_query_returns_error(self, mock_parse: MagicMock) -> None:
+        tool = SearchArxiv()
         result = tool.execute(query="")
         assert "required" in result.message.lower()
         mock_parse.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_no_results_returns_message(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_no_results_returns_message(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="zzznoresults")
-
+        result = SearchArxiv().execute(query="zzznoresults")
         assert len(result.items) == 0
         assert "no" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_api_failure_returns_error(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_api_failure_returns_error(self, mock_parse: MagicMock) -> None:
         mock_parse.side_effect = OSError("connection refused")
-
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="attention")
-
+        result = SearchArxiv().execute(query="attention")
         assert len(result.items) == 0
         assert "failed" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.arxiv.time.sleep")
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_rate_limit_retries_once_then_fails(self, mock_parse: MagicMock, mock_sleep: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-
+    def test_rate_limit_retries_once_then_fails(self, mock_parse: MagicMock, mock_sleep: MagicMock) -> None:
         class RateLimitedFeed:
             status = 429
             entries: list = []
             bozo = False
 
         mock_parse.return_value = RateLimitedFeed()
-
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="attention")
+        result = SearchArxiv().execute(query="attention")
 
         assert mock_parse.call_count == 2
         mock_sleep.assert_called_once()
         assert "rate limit" in result.message.lower()
         assert result.items == []
-        db.close()
 
     @patch("patronus.tools.arxiv.time.sleep")
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_rate_limit_succeeds_on_retry(self, mock_parse: MagicMock, mock_sleep: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-
+    def test_rate_limit_succeeds_on_retry(self, mock_parse: MagicMock, mock_sleep: MagicMock) -> None:
         class RateLimitedFeed:
             status = 429
             entries: list = []
             bozo = False
 
         mock_parse.side_effect = [RateLimitedFeed(), _make_fake_feed(FAKE_ENTRIES[:1])]
-
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="attention")
+        result = SearchArxiv().execute(query="attention")
 
         assert mock_parse.call_count == 2
         mock_sleep.assert_called_once()
         assert len(result.items) == 1
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_strips_version_from_url(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_strips_version_from_url(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([{
             "id": "http://arxiv.org/abs/2301.99999v3",
             "title": "Test Paper",
@@ -586,102 +503,57 @@ class TestSearchArxiv:
             "authors": [],
             "tags": [],
         }])
-
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="test")
-
+        result = SearchArxiv().execute(query="test")
         assert result.items[0]["url"] == "https://arxiv.org/abs/2301.99999"
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_sort_by_recency_sets_sortby_param(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_sort_by_recency_sets_sortby_param(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="attention", sort_by="recency")
-
+        SearchArxiv().execute(query="attention", sort_by="recency")
         call_url = mock_parse.call_args[0][0]
         assert "sortBy=submittedDate" in call_url
         assert "sortOrder=descending" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_sort_by_relevance_is_default(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_sort_by_relevance_is_default(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="attention")
-
+        SearchArxiv().execute(query="attention")
         call_url = mock_parse.call_args[0][0]
         assert "sortBy=relevance" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_category_filter_included_in_query(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_category_filter_included_in_query(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="attention", category="cs.LG")
-
+        SearchArxiv().execute(query="attention", category="cs.LG")
         call_url = mock_parse.call_args[0][0]
         assert "cat:cs.LG" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_multiword_query_ands_each_term(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_multiword_query_ands_each_term(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="reward hacking")
-
+        SearchArxiv().execute(query="reward hacking")
         call_url = mock_parse.call_args[0][0]
         assert "all:reward" in call_url
         assert "all:hacking" in call_url
         assert "AND" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_single_word_query_uses_all_prefix(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_single_word_query_uses_all_prefix(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="transformers")
-
+        SearchArxiv().execute(query="transformers")
         call_url = mock_parse.call_args[0][0]
         assert "all:transformers" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_days_filter_included_in_query(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
+    def test_days_filter_included_in_query(self, mock_parse: MagicMock) -> None:
         mock_parse.return_value = _make_fake_feed([])
-
-        tool = SearchArxiv(config, db)
-        tool.execute(query="attention", days=7)
-
+        SearchArxiv().execute(query="attention", days=7)
         call_url = mock_parse.call_args[0][0]
         assert "submittedDate" in call_url
-        db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
-    def test_journal_ref_included_when_present(self, mock_parse: MagicMock, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-        entry_with_journal = {
-            **FAKE_ENTRIES[0],
-            "journal_ref": "NeurIPS 2023",
-        }
+    def test_journal_ref_included_when_present(self, mock_parse: MagicMock) -> None:
+        entry_with_journal = {**FAKE_ENTRIES[0], "journal_ref": "NeurIPS 2023"}
 
         class FakeEntryWithJournal:
             def __init__(self) -> None:
@@ -697,17 +569,11 @@ class TestSearchArxiv:
             entries = [FakeEntryWithJournal()]
 
         mock_parse.return_value = FakeFeedWithJournal()
-        tool = SearchArxiv(config, db)
-        result = tool.execute(query="attention")
-
-        assert len(result.items) == 1
+        result = SearchArxiv().execute(query="attention")
         assert result.items[0].get("journal_ref") == "NeurIPS 2023"
-        db.close()
 
-    def test_tool_metadata(self, tmp_path: object) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config()
-        tool = SearchArxiv(config, db)
+    def test_tool_metadata(self) -> None:
+        tool = SearchArxiv()
         assert tool.name == "search_arxiv"
         defn = tool.to_definition()
         props = defn["input_schema"]["properties"]
@@ -716,33 +582,31 @@ class TestSearchArxiv:
         assert "sort_by" in props
         assert "category" in props
         assert "days" in props
-        assert "not yet implemented" not in tool.description
         assert "citation" in tool.description.lower()
-        db.close()
 
 
-def _add_item_to_digests(db: Database, item_id: str, count: int) -> None:
-    for _ in range(count):
-        db.save_digest(
-            generated_at="2026-02-01T08:00:00Z",
-            item_count=1,
-            formatted_text=None,
-            items=[{"item_id": item_id, "summary": "s", "score": 1.0, "matched_topic": ""}],
-        )
+def _save_digest_with_item(db: Database, item_id: str, days_ago: int = 0) -> None:
+    generated_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db.save_digest(
+        generated_at=generated_at,
+        item_count=1,
+        formatted_text=None,
+        items=[{"item_id": item_id, "summary": "s", "score": 1.0, "matched_topic": ""}],
+    )
 
 
 class TestSearchSimilarDigestFilter:
     @patch("patronus.tools.local.embed_text")
-    def test_excludes_over_digested_items(self, mock_embed: MagicMock, tmp_path: object) -> None:
+    def test_excludes_item_digested_recently(self, mock_embed: MagicMock, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         config = _make_config()
 
         emb = _unit_vec(1.0, 0.0, 0.0)
         fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
                                text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
-        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
-                               text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
-        _add_item_to_digests(db, stale_id, 3)
+        recent_digest_id = db.add_item(url="https://recent.com", source_type="rss", title="RecentlyDigested",
+                                       text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
+        _save_digest_with_item(db, recent_digest_id, days_ago=5)
 
         mock_embed.return_value = emb
         tool = SearchSimilar(config, db)
@@ -750,18 +614,18 @@ class TestSearchSimilarDigestFilter:
 
         ids = {item["id"] for item in result.items}
         assert fresh_id in ids
-        assert stale_id not in ids
+        assert recent_digest_id not in ids
         db.close()
 
     @patch("patronus.tools.local.embed_text")
-    def test_includes_items_below_threshold(self, mock_embed: MagicMock, tmp_path: object) -> None:
+    def test_includes_item_digested_outside_lookback(self, mock_embed: MagicMock, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         config = _make_config()
 
         emb = _unit_vec(1.0, 0.0, 0.0)
-        item_id = db.add_item(url="https://twice.com", source_type="rss", title="Twice",
+        item_id = db.add_item(url="https://old.com", source_type="rss", title="OldDigest",
                               text="text", embedding=emb, timestamp="2026-02-15T00:00:00Z")
-        _add_item_to_digests(db, item_id, 2)
+        _save_digest_with_item(db, item_id, days_ago=45)
 
         mock_embed.return_value = emb
         tool = SearchSimilar(config, db)
@@ -772,66 +636,66 @@ class TestSearchSimilarDigestFilter:
 
 
 class TestSearchRecentDigestFilter:
-    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+    def test_excludes_item_digested_recently(self, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         now = datetime.now(timezone.utc)
         ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh", timestamp=ts)
-        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale", timestamp=ts)
-        _add_item_to_digests(db, stale_id, 3)
+        recent_digest_id = db.add_item(url="https://recent.com", source_type="rss", title="RecentlyDigested", timestamp=ts)
+        _save_digest_with_item(db, recent_digest_id, days_ago=5)
 
         tool = SearchRecent(db)
         result = tool.execute(days=3)
 
         ids = {item["id"] for item in result.items}
         assert fresh_id in ids
-        assert stale_id not in ids
+        assert recent_digest_id not in ids
         db.close()
 
 
 class TestSearchByTopicDigestFilter:
-    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+    def test_excludes_item_digested_recently(self, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         config = _make_config()
 
         fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
                                timestamp="2026-02-15T00:00:00Z")
-        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
-                               timestamp="2026-02-15T00:00:00Z")
-        for iid in [fresh_id, stale_id]:
+        recent_digest_id = db.add_item(url="https://recent.com", source_type="rss", title="RecentlyDigested",
+                                       timestamp="2026-02-15T00:00:00Z")
+        for iid in [fresh_id, recent_digest_id]:
             with db._session() as session:
                 item = session.get(Item, iid)
                 item.topic_cluster = "ml"
                 session.add(item)
                 session.commit()
-        _add_item_to_digests(db, stale_id, 3)
+        _save_digest_with_item(db, recent_digest_id, days_ago=5)
 
         tool = SearchByTopic(config, db)
         result = tool.execute(topic="ml")
 
         ids = {item["id"] for item in result.items}
         assert fresh_id in ids
-        assert stale_id not in ids
+        assert recent_digest_id not in ids
         db.close()
 
 
 class TestSearchBySourceDigestFilter:
-    def test_excludes_over_digested_items(self, tmp_path: object) -> None:
+    def test_excludes_item_digested_recently(self, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
 
         fresh_id = db.add_item(url="https://fresh.com", source_type="rss", title="Fresh",
                                timestamp="2026-02-15T00:00:00Z")
-        stale_id = db.add_item(url="https://stale.com", source_type="rss", title="Stale",
-                               timestamp="2026-02-15T00:00:00Z")
-        _add_item_to_digests(db, stale_id, 3)
+        recent_digest_id = db.add_item(url="https://recent.com", source_type="rss", title="RecentlyDigested",
+                                       timestamp="2026-02-15T00:00:00Z")
+        _save_digest_with_item(db, recent_digest_id, days_ago=5)
 
         tool = SearchBySource(db)
         result = tool.execute(source_type="rss")
 
         ids = {item["id"] for item in result.items}
         assert fresh_id in ids
-        assert stale_id not in ids
+        assert recent_digest_id not in ids
         db.close()
 
 
@@ -853,7 +717,6 @@ def _make_notion_config(mirror_path: str = "", database_ids: dict | None = None)
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={},
         notion=NotionConfig(
@@ -1129,12 +992,11 @@ def _make_mock_works_chain(results: list) -> MagicMock:
 
 class TestSearchOpenAlex:
     @patch("patronus.tools.openalex.Works")
-    def test_returns_results(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_returns_results(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS)
 
-        tool = SearchOpenAlex(config, db)
+        tool = SearchOpenAlex(config)
         result = tool.execute(query="consciousness")
 
         assert len(result.items) == 2
@@ -1146,359 +1008,207 @@ class TestSearchOpenAlex:
         assert result.items[0]["citation_count"] == 42
         assert "Consciousness" in result.items[0]["topics"]
         assert "consciousness" in result.items[0]["snippet"].lower()
+
+    @patch("patronus.tools.openalex.Works")
+    def test_result_id_is_canonical_url(self, MockWorks: MagicMock) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
+        result = SearchOpenAlex(config).execute(query="consciousness")
+        assert result.items[0]["id"] == "https://doi.org/10.1234/fake.001"
+
+    @patch("patronus.tools.openalex.Works")
+    def test_does_not_write_to_db(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
+        SearchOpenAlex(config).execute(query="consciousness")
+        assert db.get_item_by_url("https://doi.org/10.1234/fake.001") is None
         db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_falls_back_to_landing_page_url_when_no_doi(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_falls_back_to_landing_page_url_when_no_doi(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[1:])
-
-        tool = SearchOpenAlex(config, db)
-        result = tool.execute(query="language")
-
+        result = SearchOpenAlex(config).execute(query="language")
         assert result.items[0]["url"] == "https://example.com/paper2"
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_ingests_new_papers_into_db(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_empty_query_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="consciousness")
-
-        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
-        assert ingested is not None
-        assert ingested.source_type == "openalex_search"
-        assert ingested.item_type == "paper"
-        assert ingested.title == "Attention and Consciousness"
-        assert ingested.author == "Jane Doe, John Smith"
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_deduplicates_already_ingested_papers(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-
-        tool = SearchOpenAlex(config, db)
-        result1 = tool.execute(query="consciousness")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-        result2 = tool.execute(query="consciousness")
-
-        assert "1 newly ingested" in result1.message
-        assert "0 newly ingested" in result2.message
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_empty_query_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-
-        tool = SearchOpenAlex(config, db)
-        result = tool.execute(query="")
-
+        result = SearchOpenAlex(config).execute(query="")
         assert "required" in result.message.lower()
         MockWorks.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_no_results_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_no_results_returns_message(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain([])
-
-        tool = SearchOpenAlex(config, db)
-        result = tool.execute(query="zzznoresults")
-
+        result = SearchOpenAlex(config).execute(query="zzznoresults")
         assert len(result.items) == 0
         assert "no" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_api_failure_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_api_failure_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.side_effect = OSError("connection refused")
-
-        tool = SearchOpenAlex(config, db)
-        result = tool.execute(query="consciousness")
-
+        result = SearchOpenAlex(config).execute(query="consciousness")
         assert len(result.items) == 0
         assert "failed" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_sort_by_citations_passes_correct_sort(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_sort_by_citations_passes_correct_sort(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention", sort_by="citations")
-
+        SearchOpenAlex(config).execute(query="attention", sort_by="citations")
         mock_chain.sort.assert_called_once_with(cited_by_count="desc")
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_sort_by_recency_passes_correct_sort(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_sort_by_recency_passes_correct_sort(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention", sort_by="recency")
-
+        SearchOpenAlex(config).execute(query="attention", sort_by="recency")
         mock_chain.sort.assert_called_once_with(publication_date="desc")
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_relevance_does_not_call_sort(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_relevance_does_not_call_sort(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention", sort_by="relevance")
-
+        SearchOpenAlex(config).execute(query="attention", sort_by="relevance")
         mock_chain.sort.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_from_publication_year_applies_filter(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_from_publication_year_applies_filter(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention", from_publication_year=2022)
-
+        SearchOpenAlex(config).execute(query="attention", from_publication_year=2022)
         mock_chain.filter.assert_called_once_with(from_publication_date="2022-01-01")
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_no_from_year_does_not_call_filter(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_no_from_year_does_not_call_filter(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention")
-
+        SearchOpenAlex(config).execute(query="attention")
         mock_chain.filter.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_field_filter_ai(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_field_filter_ai(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="transformers", field="ai")
-
+        SearchOpenAlex(config).execute(query="transformers", field="ai")
         mock_chain.filter.assert_called_once_with(topics={"subfield": {"id": "1702"}})
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_field_filter_philosophy(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_field_filter_philosophy(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="consciousness", field="philosophy")
-
+        SearchOpenAlex(config).execute(query="consciousness", field="philosophy")
         mock_chain.filter.assert_called_once_with(topics={"subfield": {"id": "1211"}})
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_no_field_does_not_call_filter(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_no_field_does_not_call_filter(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention")
-
+        SearchOpenAlex(config).execute(query="attention")
         mock_chain.filter.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_field_and_year_both_apply_filters(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_field_and_year_both_apply_filters(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_chain
-
-        tool = SearchOpenAlex(config, db)
-        tool.execute(query="attention", field="ai", from_publication_year=2023)
-
+        SearchOpenAlex(config).execute(query="attention", field="ai", from_publication_year=2023)
         assert mock_chain.filter.call_count == 2
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_no_embedding_by_default(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-
-        with patch("patronus.tools.openalex.embed_text") as mock_embed:
-            tool = SearchOpenAlex(config, db)
-            tool.execute(query="consciousness")
-            mock_embed.assert_not_called()
-
-        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
-        assert ingested is not None
-        assert ingested.embedding is None
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_embeds_when_flag_enabled(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-
-        fake_embedding = np.ones(4, dtype=np.float32)
-        with patch("patronus.tools.openalex.embed_text", return_value=fake_embedding):
-            tool = SearchOpenAlex(config, db, embed=True)
-            tool.execute(query="consciousness")
-
-        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
-        assert ingested is not None
-        assert ingested.embedding is not None
-        db.close()
 
 
 class TestGetCitingPapers:
     @patch("patronus.tools.openalex.Works")
-    def test_returns_citing_papers(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_returns_citing_papers(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock_chain = _make_mock_works_chain(FAKE_OPENALEX_WORKS)
         MockWorks.return_value = mock_chain
 
-        tool = GetCitingPapers(config, db)
-        result = tool.execute(doi_or_id="W2741809807")
+        result = GetCitingPapers(config).execute(doi_or_id="W2741809807")
 
         mock_chain.filter.assert_called_once_with(cites="W2741809807")
         assert len(result.items) == 2
         assert result.items[0]["source"] == "openalex"
+
+    @patch("patronus.tools.openalex.Works")
+    def test_result_id_is_canonical_url(self, MockWorks: MagicMock) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
+        result = GetCitingPapers(config).execute(doi_or_id="W2741809807")
+        assert result.items[0]["id"] == "https://doi.org/10.1234/fake.001"
+
+    @patch("patronus.tools.openalex.Works")
+    def test_does_not_write_to_db(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+        db = Database(db_path=str(tmp_path) + "/test.db")
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
+        GetCitingPapers(config).execute(doi_or_id="W2741809807")
+        assert db.get_item_by_url("https://doi.org/10.1234/fake.001") is None
         db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_resolves_bare_doi_to_openalex_id(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_resolves_bare_doi_to_openalex_id(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-        # First call: Works()["https://doi.org/10.1234/foo"] → returns work with id
         mock_lookup = MagicMock()
-        mock_lookup.get.return_value = {"id": "https://openalex.org/W9999999"}
         mock_lookup.__getitem__ = MagicMock(return_value={"id": "https://openalex.org/W9999999"})
         mock_chain = _make_mock_works_chain([])
         MockWorks.return_value = mock_lookup
-        # Second call (filter chain) needs to return the mock_chain behaviour
         mock_lookup.filter.return_value = mock_chain
         mock_chain.sort.return_value = mock_chain
         mock_chain.get.return_value = []
 
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="10.1234/foo")
-
+        GetCitingPapers(config).execute(doi_or_id="10.1234/foo")
         mock_lookup.filter.assert_called_once_with(cites="W9999999")
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_openalex_id_passed_through_without_lookup(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_openalex_id_passed_through_without_lookup(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain([])
-
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="W2741809807")
-
-        mock_chain = MockWorks.return_value
-        # W... IDs go straight to filter without a lookup call
-        mock_chain.filter.assert_called_once_with(cites="W2741809807")
-        db.close()
+        GetCitingPapers(config).execute(doi_or_id="W2741809807")
+        MockWorks.return_value.filter.assert_called_once_with(cites="W2741809807")
 
     @patch("patronus.tools.openalex.Works")
-    def test_default_sort_is_recency(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_default_sort_is_recency(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain([])
-
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="W2741809807")
-
-        mock_chain = MockWorks.return_value
-        mock_chain.sort.assert_called_once_with(publication_date="desc")
-        db.close()
+        GetCitingPapers(config).execute(doi_or_id="W2741809807")
+        MockWorks.return_value.sort.assert_called_once_with(publication_date="desc")
 
     @patch("patronus.tools.openalex.Works")
-    def test_sort_by_citations(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_sort_by_citations(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain([])
-
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="W2741809807", sort_by="citations")
-
-        mock_chain = MockWorks.return_value
-        mock_chain.sort.assert_called_once_with(cited_by_count="desc")
-        db.close()
+        GetCitingPapers(config).execute(doi_or_id="W2741809807", sort_by="citations")
+        MockWorks.return_value.sort.assert_called_once_with(cited_by_count="desc")
 
     @patch("patronus.tools.openalex.Works")
-    def test_ingests_with_openalex_citing_source_type(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_empty_id_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = _make_mock_works_chain(FAKE_OPENALEX_WORKS[:1])
-
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="W2741809807")
-
-        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
-        assert ingested is not None
-        assert ingested.source_type == "openalex_citing"
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_empty_id_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-
-        tool = GetCitingPapers(config, db)
-        result = tool.execute(doi_or_id="")
-
+        result = GetCitingPapers(config).execute(doi_or_id="")
         assert "required" in result.message.lower()
         MockWorks.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-
-        tool = GetCitingPapers(config, db)
-        result = tool.execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
-
+        result = GetCitingPapers(config).execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
         assert "could not recognise" in result.message.lower()
         assert "OpenAlex" in result.message
         MockWorks.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_arxiv_url_resolved_correctly(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_arxiv_url_resolved_correctly(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         mock = MagicMock()
         mock.__getitem__.return_value = {"id": "https://openalex.org/W9999999"}
@@ -1506,41 +1216,27 @@ class TestGetCitingPapers:
         mock.filter.return_value.sort.return_value = mock.filter.return_value
         MockWorks.return_value = mock
 
-        tool = GetCitingPapers(config, db)
-        tool.execute(doi_or_id="https://arxiv.org/abs/1706.03762")
-
+        GetCitingPapers(config).execute(doi_or_id="https://arxiv.org/abs/1706.03762")
         mock.__getitem__.assert_called_once_with("https://doi.org/10.48550/arxiv.1706.03762")
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_no_results_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_no_results_returns_message(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = _make_mock_works_chain([])
-
-        tool = GetCitingPapers(config, db)
-        result = tool.execute(doi_or_id="W9999999")
-
+        result = GetCitingPapers(config).execute(doi_or_id="W9999999")
         assert len(result.items) == 0
         assert "no" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_api_failure_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_api_failure_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.side_effect = OSError("connection refused")
-
-        tool = GetCitingPapers(config, db)
-        result = tool.execute(doi_or_id="W2741809807")
-
+        result = GetCitingPapers(config).execute(doi_or_id="W2741809807")
         assert "failed" in result.message.lower()
-        db.close()
 
 
 class TestGetReferencedPapers:
     def _make_mock_works(self, ref_ids: list[str], fetch_results: list) -> MagicMock:
-        """Single Works() instance mock that handles both the lookup and filter calls."""
         mock = MagicMock()
         mock.__getitem__.return_value = {"referenced_works": ref_ids}
         mock_chain = _make_mock_works_chain(fetch_results)
@@ -1548,149 +1244,110 @@ class TestGetReferencedPapers:
         return mock
 
     @patch("patronus.tools.openalex.Works")
-    def test_returns_referenced_papers(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_returns_referenced_papers(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         ref_ids = ["https://openalex.org/W1111111111", "https://openalex.org/W2222222222"]
         MockWorks.return_value = self._make_mock_works(ref_ids, FAKE_OPENALEX_WORKS)
 
-        tool = GetReferencedPapers(config, db)
-        result = tool.execute(doi_or_id="W9999999")
+        result = GetReferencedPapers(config).execute(doi_or_id="W9999999")
 
         assert len(result.items) == 2
         assert result.items[0]["source"] == "openalex"
         assert "2 total in bibliography" in result.message
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_fetches_by_id_list(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_result_id_is_canonical_url(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-        ref_ids = ["https://openalex.org/W1111111111", "https://openalex.org/W2222222222"]
-        mock = self._make_mock_works(ref_ids, [])
-        MockWorks.return_value = mock
-
-        tool = GetReferencedPapers(config, db)
-        tool.execute(doi_or_id="W9999999")
-
-        mock.filter.assert_called_once_with(openalex="W1111111111|W2222222222")
-        db.close()
+        MockWorks.return_value = self._make_mock_works(
+            ["https://openalex.org/W1111111111"], FAKE_OPENALEX_WORKS[:1]
+        )
+        result = GetReferencedPapers(config).execute(doi_or_id="W9999999")
+        assert result.items[0]["id"] == "https://doi.org/10.1234/fake.001"
 
     @patch("patronus.tools.openalex.Works")
-    def test_default_sort_is_citations(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
-
-        tool = GetReferencedPapers(config, db)
-        tool.execute(doi_or_id="W9999999")
-
-        mock_chain = MockWorks.return_value.filter.return_value
-        mock_chain.sort.assert_called_once_with(cited_by_count="desc")
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_sort_by_recency(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
-        config = _make_config(openalex_api_key="test-key")
-        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
-
-        tool = GetReferencedPapers(config, db)
-        tool.execute(doi_or_id="W9999999", sort_by="recency")
-
-        mock_chain = MockWorks.return_value.filter.return_value
-        mock_chain.sort.assert_called_once_with(publication_date="desc")
-        db.close()
-
-    @patch("patronus.tools.openalex.Works")
-    def test_ingests_with_openalex_references_source_type(self, MockWorks: MagicMock, tmp_path: Path) -> None:
+    def test_does_not_write_to_db(self, MockWorks: MagicMock, tmp_path: Path) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = self._make_mock_works(
             ["https://openalex.org/W1111111111"], FAKE_OPENALEX_WORKS[:1]
         )
-
-        tool = GetReferencedPapers(config, db)
-        tool.execute(doi_or_id="W9999999")
-
-        ingested = db.get_item_by_url("https://doi.org/10.1234/fake.001")
-        assert ingested is not None
-        assert ingested.source_type == "openalex_references"
+        GetReferencedPapers(config).execute(doi_or_id="W9999999")
+        assert db.get_item_by_url("https://doi.org/10.1234/fake.001") is None
         db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_no_references_returns_message(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_fetches_by_id_list(self, MockWorks: MagicMock) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        ref_ids = ["https://openalex.org/W1111111111", "https://openalex.org/W2222222222"]
+        mock = self._make_mock_works(ref_ids, [])
+        MockWorks.return_value = mock
+
+        GetReferencedPapers(config).execute(doi_or_id="W9999999")
+        mock.filter.assert_called_once_with(openalex="W1111111111|W2222222222")
+
+    @patch("patronus.tools.openalex.Works")
+    def test_default_sort_is_citations(self, MockWorks: MagicMock) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
+        GetReferencedPapers(config).execute(doi_or_id="W9999999")
+        mock_chain = MockWorks.return_value.filter.return_value
+        mock_chain.sort.assert_called_once_with(cited_by_count="desc")
+
+    @patch("patronus.tools.openalex.Works")
+    def test_sort_by_recency(self, MockWorks: MagicMock) -> None:
+        config = _make_config(openalex_api_key="test-key")
+        MockWorks.return_value = self._make_mock_works(["https://openalex.org/W111"], [])
+        GetReferencedPapers(config).execute(doi_or_id="W9999999", sort_by="recency")
+        mock_chain = MockWorks.return_value.filter.return_value
+        mock_chain.sort.assert_called_once_with(publication_date="desc")
+
+    @patch("patronus.tools.openalex.Works")
+    def test_no_references_returns_message(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value = self._make_mock_works([], [])
-
-        tool = GetReferencedPapers(config, db)
-        result = tool.execute(doi_or_id="W9999999")
-
+        result = GetReferencedPapers(config).execute(doi_or_id="W9999999")
         assert len(result.items) == 0
         assert "no references" in result.message.lower()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_empty_id_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_empty_id_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-
-        tool = GetReferencedPapers(config, db)
-        result = tool.execute(doi_or_id="")
-
+        result = GetReferencedPapers(config).execute(doi_or_id="")
         assert "required" in result.message.lower()
         MockWorks.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_arbitrary_url_returns_clear_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
-
-        tool = GetReferencedPapers(config, db)
-        result = tool.execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
-
+        result = GetReferencedPapers(config).execute(doi_or_id="https://www.anthropic.com/research/measuring-agent-autonomy")
         assert "could not recognise" in result.message.lower()
         MockWorks.assert_not_called()
-        db.close()
 
     @patch("patronus.tools.openalex.Works")
-    def test_lookup_failure_returns_error(self, MockWorks: MagicMock, tmp_path: Path) -> None:
-        db = Database(db_path=str(tmp_path) + "/test.db")
+    def test_lookup_failure_returns_error(self, MockWorks: MagicMock) -> None:
         config = _make_config(openalex_api_key="test-key")
         MockWorks.return_value.__getitem__.side_effect = OSError("not found")
-
-        tool = GetReferencedPapers(config, db)
-        result = tool.execute(doi_or_id="W9999999")
-
+        result = GetReferencedPapers(config).execute(doi_or_id="W9999999")
         assert "failed" in result.message.lower()
-        db.close()
 
 
 class TestRegisterOpenAlexTools:
-    def test_registers_tool_when_api_key_set(self, tmp_path: Path) -> None:
+    def test_registers_tool_when_api_key_set(self) -> None:
         config = _make_config(openalex_api_key="test-key")
-        db = Database(db_path=str(tmp_path) + "/test.db")
         registry = ToolRegistry()
-        register_openalex_tools(registry, config, db)
+        register_openalex_tools(registry, config)
         assert "search_openalex" in registry.tool_names
-        db.close()
 
-    def test_registers_all_tools_when_api_key_set(self, tmp_path: Path) -> None:
+    def test_registers_all_tools_when_api_key_set(self) -> None:
         config = _make_config(openalex_api_key="test-key")
-        db = Database(db_path=str(tmp_path) + "/test.db")
         registry = ToolRegistry()
-        register_openalex_tools(registry, config, db)
+        register_openalex_tools(registry, config)
         assert "get_citing_papers" in registry.tool_names
         assert "get_referenced_papers" in registry.tool_names
-        db.close()
 
-    def test_does_not_register_when_no_api_key(self, tmp_path: Path) -> None:
+    def test_does_not_register_when_no_api_key(self) -> None:
         config = _make_config(openalex_api_key="")
-        db = Database(db_path=str(tmp_path) + "/test.db")
         registry = ToolRegistry()
-        register_openalex_tools(registry, config, db)
+        register_openalex_tools(registry, config)
         assert "search_openalex" not in registry.tool_names
         assert "get_citing_papers" not in registry.tool_names
-        db.close()

@@ -5,16 +5,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from patronus.agent import (
-    Phase,
-    ASSEMBLY_SYSTEM_PROMPT,
-    SCAN_SYSTEM_PROMPT,
-    DEEP_DIVE_SYSTEM_PROMPT,
     SUBMIT_DIGEST_TOOL,
+    NewsFilterResult,
+    NewsItem,
     _parse_submit_digest,
-    get_phase,
+    build_inventory,
+    filter_news,
+    identify_angles,
     plan_and_assemble,
+    pull_threads,
+    scout_research,
+    summarize_chatter,
 )
-from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig
+from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig
 from patronus.context import Context
 from patronus.digest import Digest, SectionType
 from patronus.llm import LLMResponse, ToolCall
@@ -27,7 +30,6 @@ def _make_config(agent: AgentConfig | None = None) -> Config:
         digest=DigestConfig(mode="agent"),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={},
         agent=agent or AgentConfig(max_iterations=3, max_tokens=2000),
@@ -66,37 +68,8 @@ def _make_search_response(tool_name: str = "search_recent") -> LLMResponse:
     )
 
 
-class TestGetPhase:
-    def test_single_iteration_is_assembly(self) -> None:
-        assert get_phase(0, 1) == Phase.ASSEMBLY
-
-    def test_three_iterations_all_phases(self) -> None:
-        assert get_phase(0, 3) == Phase.SCAN
-        assert get_phase(1, 3) == Phase.DEEP_DIVE
-        assert get_phase(2, 3) == Phase.ASSEMBLY
-
-    def test_six_iterations(self) -> None:
-        # scan_end=2, deep_dive_end=4
-        assert get_phase(0, 6) == Phase.SCAN
-        assert get_phase(1, 6) == Phase.SCAN
-        assert get_phase(2, 6) == Phase.DEEP_DIVE
-        assert get_phase(3, 6) == Phase.DEEP_DIVE
-        assert get_phase(4, 6) == Phase.ASSEMBLY
-        assert get_phase(5, 6) == Phase.ASSEMBLY
-
-    def test_ten_iterations(self) -> None:
-        # scan_end=3, deep_dive_end=6
-        assert get_phase(0, 10) == Phase.SCAN
-        assert get_phase(2, 10) == Phase.SCAN
-        assert get_phase(3, 10) == Phase.DEEP_DIVE
-        assert get_phase(5, 10) == Phase.DEEP_DIVE
-        assert get_phase(6, 10) == Phase.ASSEMBLY
-        assert get_phase(9, 10) == Phase.ASSEMBLY
-
-    def test_two_iterations(self) -> None:
-        # scan_end=0, deep_dive_end=1
-        assert get_phase(0, 2) == Phase.DEEP_DIVE
-        assert get_phase(1, 2) == Phase.ASSEMBLY
+def _make_text_response(text: str = "Here is the output.") -> LLMResponse:
+    return LLMResponse(text=text, tool_calls=[], stop_reason="end_turn")
 
 
 class TestParseSubmitDigest:
@@ -161,8 +134,8 @@ class TestParseSubmitDigest:
     def test_missing_optional_item_fields(self) -> None:
         input_data = {
             "sections": [{
-                "type": "paper_roundup",
-                "title": "Papers",
+                "type": "research_roundup",
+                "title": "Research",
                 "items": [{"item_id": "x", "title": "Paper", "url": "https://x.com", "summary": "Good"}],
             }]
         }
@@ -191,12 +164,23 @@ class TestParseSubmitDigest:
     def test_title_falls_back_to_section_type(self) -> None:
         input_data = {
             "sections": [{
-                "type": "serendipity",
+                "type": "threads",
                 "items": [{"item_id": "x", "title": "t", "url": "u", "summary": "s"}],
             }]
         }
         digest = _parse_submit_digest(input_data)
-        assert digest.sections[0].title == "serendipity"
+        assert digest.sections[0].title == "threads"
+
+    def test_new_section_types(self) -> None:
+        for section_type in ("whats_new", "research_roundup", "threads"):
+            digest = _parse_submit_digest({
+                "sections": [{
+                    "type": section_type,
+                    "title": section_type,
+                    "items": [{"item_id": "x", "title": "t", "url": "u", "summary": "s"}],
+                }]
+            })
+            assert len(digest.sections) == 1
 
 
 class TestSubmitDigestToolSchema:
@@ -219,6 +203,425 @@ class TestSubmitDigestToolSchema:
         )
         assert set(item_schema["required"]) == {"item_id", "title", "url", "summary"}
 
+    def test_new_section_types_in_enum(self) -> None:
+        type_enum = (
+            SUBMIT_DIGEST_TOOL["input_schema"]["properties"]["sections"]["items"]
+            ["properties"]["type"]["enum"]
+        )
+        assert "whats_new" in type_enum
+        assert "research_roundup" in type_enum
+        assert "threads" in type_enum
+
+
+class TestBuildInventory:
+    def test_no_items_returns_message(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        config = _make_config()
+        result, tweet_result, mapping = build_inventory(config, db)
+        assert "No new items" in result
+        assert mapping == {}
+
+    def test_no_db_returns_three_tuple(self) -> None:
+        config = _make_config()
+        result, tweet_result, mapping = build_inventory(config, None)
+        assert "DB not provided" in result
+        assert "DB not provided" in tweet_result
+        assert mapping == {}
+
+    def test_items_appear_in_inventory(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(
+            url="https://example.com/paper1",
+            source_type="rss",
+            title="A Great Paper",
+            source="Test Feed",
+            item_type="paper",
+        )
+        config = _make_config()
+        result, _, mapping = build_inventory(config, db)
+        assert "A Great Paper" in result
+        assert "https://example.com/paper1" in result
+
+    def test_short_ids_in_inventory(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(url="https://a.com/1", source_type="rss", source="Feed A", title="Item 1")
+        db.add_item(url="https://b.com/2", source_type="rss", source="Feed A", title="Item 2")
+        config = _make_config()
+        result, _, mapping = build_inventory(config, db)
+        assert "ID: 1" in result
+        assert "ID: 2" in result
+        assert len(mapping) == 2
+        assert all(len(v) == 32 for v in mapping.values())  # real IDs are 32-char hex
+
+    def test_mapping_covers_all_items(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        real_ids = [
+            db.add_item(url=f"https://x.com/{i}", source_type="rss", title=f"Item {i}")
+            for i in range(5)
+        ]
+        config = _make_config()
+        _, _, mapping = build_inventory(config, db)
+        assert len(mapping) == 5
+        assert set(mapping.values()) == set(real_ids)
+
+    def test_inventory_includes_source_grouping(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(url="https://a.com/1", source_type="rss", source="Feed A", title="Item 1")
+        db.add_item(url="https://b.com/1", source_type="rss", source="Feed B", title="Item 2")
+        config = _make_config()
+        result, _, _ = build_inventory(config, db)
+        assert "Feed A" in result
+        assert "Feed B" in result
+
+    def test_previously_featured_flagged(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        from datetime import datetime, timezone
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        item_id = db.add_item(
+            url="https://example.com/old",
+            source_type="rss",
+            title="Old Item",
+        )
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.save_digest(
+            generated_at=now,
+            item_count=1,
+            formatted_text="",
+            items=[{"item_id": item_id, "summary": "", "score": 0.0, "matched_topic": ""}],
+        )
+        config = _make_config()
+        result, _, _ = build_inventory(config, db)
+        assert "PREVIOUSLY_FEATURED" in result
+
+    def test_tweet_inventory_contains_only_tweets(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(url="https://example.com/article", source_type="rss", title="Article", item_type="article")
+        db.add_item(url="https://twitter.com/status/1", source_type="rss", title="Tweet content", item_type="tweet")
+        config = _make_config()
+        _, tweet_inventory, _ = build_inventory(config, db)
+        assert "Tweet content" in tweet_inventory
+        assert "Article" not in tweet_inventory
+
+    def test_no_tweets_returns_placeholder(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(url="https://example.com/article", source_type="rss", title="Article", item_type="article")
+        config = _make_config()
+        _, tweet_inventory, _ = build_inventory(config, db)
+        assert "No tweets" in tweet_inventory
+
+
+class TestIdentifyAngles:
+    @patch("patronus.agent._steps.complete")
+    def test_returns_llm_output(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "Angle 1: The SAE paper connects to reader's current work."
+        config = _make_config()
+        result = identify_angles(config, "inventory text", "reader context text")
+        assert "Angle 1" in result
+        mock_complete.assert_called_once()
+
+    @patch("patronus.agent._steps.complete")
+    def test_uses_angles_model_if_set(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "angles"
+        config = _make_config(agent=AgentConfig(
+            model="anthropic/claude-sonnet-4-20250514",
+            angles_model="google/gemini-2.5-flash-lite",
+        ))
+        identify_angles(config, "inv", "ctx")
+        call_model = mock_complete.call_args.args[0]
+        assert call_model == "google/gemini-2.5-flash-lite"
+
+    @patch("patronus.agent._steps.complete")
+    def test_falls_back_to_main_model(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "angles"
+        config = _make_config(agent=AgentConfig(model="anthropic/claude-sonnet-4-20250514"))
+        identify_angles(config, "inv", "ctx")
+        call_model = mock_complete.call_args.args[0]
+        assert call_model == "anthropic/claude-sonnet-4-20250514"
+
+    @patch("patronus.agent._steps.complete")
+    def test_inventory_in_prompt(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "angles"
+        config = _make_config()
+        identify_angles(config, "INVENTORY_SENTINEL", "CONTEXT_SENTINEL")
+        user_msg = mock_complete.call_args.kwargs["user_message"]
+        assert "INVENTORY_SENTINEL" in user_msg
+        assert "CONTEXT_SENTINEL" in user_msg
+
+
+def _make_news_result(items: list[dict] | None = None) -> NewsFilterResult:
+    if items is None:
+        items = [{"item_id": "1"}]
+    return NewsFilterResult(items=[NewsItem(**i) for i in items])
+
+
+def _make_items_by_short_id(entries: list[tuple[str, str, str, str]] | None = None) -> dict:
+    from patronus.db import Item
+    if entries is None:
+        entries = [("1", "Big News", "https://x.com", "Reuters")]
+    result = {}
+    for short_id, title, url, source in entries:
+        item = Item()
+        item.id = f"real-{short_id}"
+        item.title = title
+        item.url = url
+        item.source = source
+        item.text = f"Content of {title}."
+        item.item_type = "article"
+        result[short_id] = item
+    return result
+
+
+class TestFilterNews:
+    @patch("patronus.agent._steps.complete_structured")
+    def test_returns_formatted_output(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result()
+        config = _make_config()
+        items = _make_items_by_short_id()
+        result = filter_news(config, "inventory", "context", "angles", items)
+        assert "Big News" in result
+        assert "https://x.com" in result
+        assert "Reuters" in result
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_empty_selection_returns_placeholder(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result(items=[])
+        config = _make_config()
+        result = filter_news(config, "inventory", "context", "angles", {})
+        assert "(No news items selected.)" in result
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_uses_news_model_if_set(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result()
+        config = _make_config(agent=AgentConfig(
+            model="anthropic/claude-sonnet-4-20250514",
+            news_model="google/gemini-2.5-flash-lite",
+        ))
+        filter_news(config, "inv", "ctx", "angles", _make_items_by_short_id())
+        assert mock_cs.call_args.args[0] == "google/gemini-2.5-flash-lite"
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_angles_in_prompt(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result()
+        config = _make_config()
+        filter_news(config, "inv", "ctx", "ANGLES_SENTINEL", _make_items_by_short_id())
+        user_msg = mock_cs.call_args.kwargs["user_message"]
+        assert "ANGLES_SENTINEL" in user_msg
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_cross_ref_included_in_output(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result(items=[{"item_id": "1", "cross_ref": "research"}])
+        config = _make_config()
+        result = filter_news(config, "inv", "ctx", "angles", _make_items_by_short_id())
+        assert "CROSS_REF: research" in result
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_output_uses_raw_item_content_not_generated_summary(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result(items=[{"item_id": "1"}])
+        config = _make_config()
+        items = _make_items_by_short_id([("1", "Paper About Attention", "https://arxiv.org/abs/1", "Arxiv")])
+        result = filter_news(config, "inv", "ctx", "angles", items)
+        assert "Paper About Attention" in result
+        assert "SNIPPET" in result
+
+    @patch("patronus.agent._steps.complete_structured")
+    def test_unknown_item_id_is_skipped(self, mock_cs: MagicMock) -> None:
+        mock_cs.return_value = _make_news_result(items=[{"item_id": "99"}])
+        config = _make_config()
+        result = filter_news(config, "inv", "ctx", "angles", {})
+        assert "(No news items selected.)" in result or "Selected 0" in result or "99" not in result
+
+
+class TestSummarizeChatter:
+    @patch("patronus.agent._steps.complete")
+    def test_returns_llm_output(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "TOPIC: AI regulation\nSUMMARY: People are discussing..."
+        config = _make_config()
+        result = summarize_chatter(config, "tweet inventory", "reader context")
+        assert "TOPIC" in result
+        mock_complete.assert_called_once()
+
+    @patch("patronus.agent._steps.complete")
+    def test_uses_chatter_model_if_set(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "chatter"
+        config = _make_config(agent=AgentConfig(
+            model="anthropic/claude-sonnet-4-20250514",
+            chatter_model="google/gemini-2.5-flash-lite",
+        ))
+        summarize_chatter(config, "tweets", "ctx")
+        call_model = mock_complete.call_args.args[0]
+        assert call_model == "google/gemini-2.5-flash-lite"
+
+    @patch("patronus.agent._steps.complete")
+    def test_falls_back_to_main_model(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "chatter"
+        config = _make_config(agent=AgentConfig(model="anthropic/claude-sonnet-4-20250514"))
+        summarize_chatter(config, "tweets", "ctx")
+        call_model = mock_complete.call_args.args[0]
+        assert call_model == "anthropic/claude-sonnet-4-20250514"
+
+    @patch("patronus.agent._steps.complete")
+    def test_tweet_inventory_in_prompt(self, mock_complete: MagicMock) -> None:
+        mock_complete.return_value = "chatter"
+        config = _make_config()
+        summarize_chatter(config, "TWEET_SENTINEL", "CONTEXT_SENTINEL")
+        user_msg = mock_complete.call_args.kwargs["user_message"]
+        assert "TWEET_SENTINEL" in user_msg
+        assert "CONTEXT_SENTINEL" in user_msg
+
+
+class TestScoutResearch:
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_returns_text_output(self, mock_cwt: MagicMock) -> None:
+        mock_cwt.return_value = _make_text_response("Research output: 3 papers found.")
+        config = _make_config()
+        result = scout_research(config, "context", "angles", _make_registry())
+        assert "Research output" in result
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_executes_tool_calls(self, mock_cwt: MagicMock) -> None:
+        registry = _make_registry()
+
+        class FakeTool:
+            name = "search_similar"
+            description = "Search"
+            input_schema: dict = {}
+
+            def to_definition(self) -> dict:
+                return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
+
+            def execute(self, **params: object) -> ToolResult:
+                return ToolResult(message="3 papers found.")
+
+        registry._tools["search_similar"] = FakeTool()
+
+        mock_cwt.side_effect = [
+            _make_search_response("search_similar"),
+            _make_text_response("Here are the results."),
+        ]
+        config = _make_config()
+        result = scout_research(config, "context", "angles", registry)
+        assert mock_cwt.call_count == 2
+        assert "Here are the results." in result
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_caps_at_max_iterations(self, mock_cwt: MagicMock) -> None:
+        registry = _make_registry()
+
+        class FakeTool:
+            name = "search_similar"
+            description = ""
+            input_schema: dict = {}
+
+            def to_definition(self) -> dict:
+                return {"name": self.name, "description": "", "input_schema": {}}
+
+            def execute(self, **params: object) -> ToolResult:
+                return ToolResult(message="results")
+
+        registry._tools["search_similar"] = FakeTool()
+
+        # Always returns tool calls → exhausts iterations, then triggers synthesis call
+        mock_cwt.return_value = _make_search_response("search_similar")
+        config = _make_config()
+        scout_research(config, "ctx", "angles", registry)
+        assert mock_cwt.call_count == 3  # _RESEARCH_MAX_ITERATIONS = 2 + 1 synthesis call
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_uses_research_model(self, mock_cwt: MagicMock) -> None:
+        mock_cwt.return_value = _make_text_response("done")
+        config = _make_config(agent=AgentConfig(
+            model="anthropic/claude-sonnet-4-20250514",
+            research_model="openai/gpt-4o",
+        ))
+        scout_research(config, "ctx", "angles", _make_registry())
+        assert mock_cwt.call_args.args[0] == "openai/gpt-4o"
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_does_not_receive_inventory(self, mock_cwt: MagicMock) -> None:
+        mock_cwt.return_value = _make_text_response("done")
+        config = _make_config()
+        scout_research(config, "CONTEXT_SENTINEL", "ANGLES_SENTINEL", _make_registry())
+        user_msg = str(mock_cwt.call_args.kwargs["messages"])
+        assert "CONTEXT_SENTINEL" in user_msg
+        assert "ANGLES_SENTINEL" in user_msg
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_final_synthesis_call_when_iterations_exhausted(self, mock_cwt: MagicMock) -> None:
+        """When all iterations are used up with tool calls, a final synthesis call is made."""
+        registry = _make_registry()
+
+        class FakeTool:
+            name = "search_similar"
+            description = ""
+            input_schema: dict = {}
+
+            def to_definition(self) -> dict:
+                return {"name": self.name, "description": "", "input_schema": {}}
+
+            def execute(self, **params: object) -> ToolResult:
+                return ToolResult(message="results")
+
+        registry._tools["search_similar"] = FakeTool()
+
+        # Both iterations return tool calls — exhausts the cap. Then the synthesis call returns text.
+        mock_cwt.side_effect = [
+            _make_search_response("search_similar"),  # iter 1: tool call
+            _make_search_response("search_similar"),  # iter 2: tool call (exhausts max)
+            _make_text_response("Final curated paper list."),  # synthesis call
+        ]
+        config = _make_config()
+        result = scout_research(config, "ctx", "angles", registry)
+        # 2 iterations + 1 synthesis = 3 total calls
+        assert mock_cwt.call_count == 3
+        assert "Final curated paper list." in result
+
+
+class TestPullThreads:
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_returns_text_output(self, mock_cwt: MagicMock) -> None:
+        mock_cwt.return_value = _make_text_response("Thread: the consciousness paper connects to your Notion notes.")
+        config = _make_config()
+        result = pull_threads(config, "context", "angles", "news", "research", _make_registry())
+        assert "consciousness paper" in result
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_receives_news_and_research_context(self, mock_cwt: MagicMock) -> None:
+        mock_cwt.return_value = _make_text_response("threads")
+        config = _make_config()
+        pull_threads(config, "ctx", "angles", "NEWS_SENTINEL", "RESEARCH_SENTINEL", _make_registry())
+        user_msg = str(mock_cwt.call_args.kwargs["messages"])
+        assert "NEWS_SENTINEL" in user_msg
+        assert "RESEARCH_SENTINEL" in user_msg
+
+    @patch("patronus.agent._steps.complete_with_tools")
+    def test_caps_at_max_iterations(self, mock_cwt: MagicMock) -> None:
+        registry = _make_registry()
+
+        class FakeTool:
+            name = "search_similar"
+            description = ""
+            input_schema: dict = {}
+
+            def to_definition(self) -> dict:
+                return {"name": self.name, "description": "", "input_schema": {}}
+
+            def execute(self, **params: object) -> ToolResult:
+                return ToolResult(message="results")
+
+        registry._tools["search_similar"] = FakeTool()
+        # Always returns tool calls → exhausts iterations, then triggers synthesis call
+        mock_cwt.return_value = _make_search_response("search_similar")
+        config = _make_config()
+        pull_threads(config, "ctx", "angles", "news", "research", registry)
+        assert mock_cwt.call_count == 4  # _THREADS_MAX_ITERATIONS = 3 + 1 synthesis call
+
 
 class TestPlanAndAssemble:
     def test_requires_agent_config(self) -> None:
@@ -227,376 +630,176 @@ class TestPlanAndAssemble:
         with pytest.raises(ValueError, match="AgentConfig is required"):
             plan_and_assemble(config, _make_context(), _make_registry())
 
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_submit_in_assembly_phase(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # max_iterations=1: iteration 0 → ASSEMBLY, submit_digest is available
-        mock_complete.return_value = "search first then assemble"
-        mock_cwt.return_value = _make_submit_response("long_form_pick")
-
-        config = _make_config(agent=AgentConfig(max_iterations=1, max_tokens=2000))
-        digest = plan_and_assemble(config, _make_context(), _make_registry())
-
-        assert digest.mode == "agent"
-        assert digest.item_count == 1
-        assert digest.sections[0].type == SectionType.LONG_FORM_PICK
-        mock_cwt.assert_called_once()
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_submit_ignored_in_scan_phase(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # max_iterations=3: iteration 0 is SCAN, submit_digest not available.
-        # If the LLM calls it anyway, it should be treated as an unknown tool (ignored as retrieval call).
-        # The tool registry doesn't have it so it returns an error result; loop continues.
-        mock_complete.return_value = "planning thought"
-        mock_cwt.side_effect = [
-            # Iteration 0 (SCAN): agent somehow calls submit_digest — should be ignored
-            LLMResponse(
-                text="Done",
-                tool_calls=[ToolCall(id="c1", name="submit_digest", input={"sections": []})],
-                stop_reason="tool_use",
-            ),
-            # Iteration 1 (DEEP_DIVE): search
-            _make_search_response(),
-            # Iteration 2 (ASSEMBLY): proper submit
-            _make_submit_response("headlines"),
-        ]
-
-        registry = _make_registry()
-
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
-        digest = plan_and_assemble(config, _make_context(), registry)
-
-        assert digest.item_count == 1
-        assert digest.sections[0].type == SectionType.HEADLINES
-        assert mock_cwt.call_count == 3
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_submit_digest_absent_in_scan_tools(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # In scan phase, submit_digest must not appear in the tools list.
-        mock_complete.return_value = "thought"
-        mock_cwt.return_value = LLMResponse(
-            text="",
-            tool_calls=[],
-            stop_reason="end_turn",
+    @patch("patronus.agent.run.compose_digest")
+    @patch("patronus.agent.run.pull_threads")
+    @patch("patronus.agent.run.scout_research")
+    @patch("patronus.agent.run.summarize_chatter")
+    @patch("patronus.agent.run.filter_news")
+    @patch("patronus.agent.run.identify_angles")
+    @patch("patronus.agent.run.build_inventory")
+    def test_full_pipeline_called_in_order(
+        self,
+        mock_inventory: MagicMock,
+        mock_angles: MagicMock,
+        mock_news: MagicMock,
+        mock_chatter: MagicMock,
+        mock_research: MagicMock,
+        mock_threads: MagicMock,
+        mock_compose: MagicMock,
+    ) -> None:
+        mock_inventory.return_value = ("inventory", "tweet_inventory", {})
+        mock_angles.return_value = "angles"
+        mock_news.return_value = "news"
+        mock_chatter.return_value = "chatter"
+        mock_research.return_value = "research"
+        mock_threads.return_value = "threads"
+        expected_digest = Digest(
+            sections=[],
+            generated_at="2025-01-01T00:00:00Z",
+            mode="agent",
         )
-
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
-        plan_and_assemble(config, _make_context(), _make_registry())
-
-        # First call is iteration 0 (SCAN) — submit_digest must not be in tools
-        first_call_tools = mock_cwt.call_args_list[0].kwargs["tools"]
-        tool_names = [t["name"] for t in first_call_tools]
-        assert "submit_digest" not in tool_names
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_submit_digest_absent_in_deep_dive_tools(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # With max_iterations=6: scan[0,1], deep_dive[2,3], assembly[4,5].
-        # We need to reach iteration 2 (first DEEP_DIVE). Use a dummy tool so the
-        # early-exit guard (end_turn with no tool calls) doesn't fire before that.
-        registry = ToolRegistry()
-
-        class DummyTool:
-            @property
-            def name(self) -> str:
-                return "search_recent"
-            @property
-            def description(self) -> str:
-                return ""
-            @property
-            def input_schema(self) -> dict:
-                return {}
-            def to_definition(self) -> dict:
-                return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
-            def execute(self, **params: object) -> ToolResult:
-                return ToolResult(message="Results.")
-
-        registry._tools["search_recent"] = DummyTool()
-
-        mock_complete.return_value = "thought"
-        mock_cwt.side_effect = [
-            _make_search_response(),  # iter 0 (SCAN)
-            _make_search_response(),  # iter 1 (SCAN)
-            LLMResponse(text="", tool_calls=[], stop_reason="end_turn"),  # iter 2 (DEEP_DIVE) → stops
-        ]
-
-        config = _make_config(agent=AgentConfig(max_iterations=6, max_tokens=2000))
-        plan_and_assemble(config, _make_context(), registry)
-
-        # Call index 2 → iteration 2 (DEEP_DIVE)
-        deep_dive_tools = mock_cwt.call_args_list[2].kwargs["tools"]
-        tool_names = [t["name"] for t in deep_dive_tools]
-        assert "submit_digest" not in tool_names
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_submit_digest_present_in_assembly_tools(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # With max_iterations=3: iteration 2 is ASSEMBLY. submit_digest must be in tools.
-        mock_complete.return_value = "thought"
-        mock_cwt.side_effect = [
-            _make_search_response(),
-            _make_search_response(),
-            _make_submit_response(),
-        ]
-
-        registry = _make_registry()
-
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
-        plan_and_assemble(config, _make_context(), registry)
-
-        # Call index 2 → iteration 2 (ASSEMBLY)
-        assembly_tools = mock_cwt.call_args_list[2].kwargs["tools"]
-        tool_names = [t["name"] for t in assembly_tools]
-        assert "submit_digest" in tool_names
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_multiple_iterations_with_tool_calls(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # max_iterations=3: SCAN[0], DEEP_DIVE[1], ASSEMBLY[2]
-        registry = ToolRegistry()
-
-        class FakeTool:
-            @property
-            def name(self) -> str:
-                return "search_recent"
-            @property
-            def description(self) -> str:
-                return "Search"
-            @property
-            def input_schema(self) -> dict:
-                return {"type": "object", "properties": {}}
-            def to_definition(self) -> dict:
-                return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
-            def execute(self, **params: object) -> ToolResult:
-                return ToolResult(items=[{"title": "Found Item", "id": "f1"}], message="Found 1 item.")
-
-        registry._tools["search_recent"] = FakeTool()
-
-        mock_complete.return_value = "planning thought"
-        mock_cwt.side_effect = [
-            _make_search_response(),   # iteration 0 (SCAN)
-            _make_search_response(),   # iteration 1 (DEEP_DIVE)
-            _make_submit_response("headlines"),  # iteration 2 (ASSEMBLY)
-        ]
-
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
-        digest = plan_and_assemble(config, _make_context(), registry)
-
-        assert digest.item_count == 1
-        assert digest.sections[0].type == SectionType.HEADLINES
-        assert mock_cwt.call_count == 3
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_max_iterations_returns_empty(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        mock_complete.return_value = "planning thought"
-        mock_cwt.return_value = LLMResponse(
-            text="Still searching...",
-            tool_calls=[ToolCall(id="c1", name="search_recent", input={})],
-            stop_reason="tool_use",
-        )
-
-        config = _make_config(agent=AgentConfig(max_iterations=2, max_tokens=2000))
-        registry = ToolRegistry()
-
-        class DummyTool:
-            @property
-            def name(self) -> str:
-                return "search_recent"
-            @property
-            def description(self) -> str:
-                return ""
-            @property
-            def input_schema(self) -> dict:
-                return {}
-            def to_definition(self) -> dict:
-                return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
-            def execute(self, **params: object) -> ToolResult:
-                return ToolResult(message="Results")
-
-        registry._tools["search_recent"] = DummyTool()
-
-        digest = plan_and_assemble(config, _make_context(), registry)
-
-        assert digest.item_count == 0
-        assert digest.mode == "agent"
-        assert mock_cwt.call_count == 2
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_agent_ends_without_tools(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        mock_complete.return_value = "planning thought"
-        mock_cwt.return_value = LLMResponse(
-            text="I don't have enough to make a digest.",
-            tool_calls=[],
-            stop_reason="end_turn",
-        )
+        mock_compose.return_value = expected_digest
 
         config = _make_config()
-        digest = plan_and_assemble(config, _make_context(), _make_registry())
+        context = _make_context()
+        result = plan_and_assemble(config, context, _make_registry())
 
-        assert digest.item_count == 0
-        assert digest.mode == "agent"
+        mock_inventory.assert_called_once()
+        mock_angles.assert_called_once()
+        mock_news.assert_called_once()
+        mock_chatter.assert_called_once()
+        mock_research.assert_called_once()
+        mock_threads.assert_called_once()
+        mock_compose.assert_called_once()
+        assert result is expected_digest
 
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_invalid_submit_retries(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # max_iterations=1 → ASSEMBLY. Invalid submit on first call, valid on second.
-        mock_complete.return_value = "planning thought"
-        mock_cwt.side_effect = [
-            LLMResponse(
-                text="Submitting",
-                tool_calls=[ToolCall(
-                    id="c1",
-                    name="submit_digest",
-                    input={"sections": [{"type": "invalid_type", "title": "Bad", "items": []}]},
-                )],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(
-                text="Fixed",
-                tool_calls=[ToolCall(
-                    id="c2",
-                    name="submit_digest",
-                    input={"sections": [{
-                        "type": "headlines",
-                        "title": "Headlines",
-                        "items": [{"item_id": "1", "title": "T", "url": "U", "summary": "S"}],
-                    }]},
-                )],
-                stop_reason="tool_use",
-            ),
-        ]
+    @patch("patronus.agent.run.compose_digest")
+    @patch("patronus.agent.run.pull_threads")
+    @patch("patronus.agent.run.scout_research")
+    @patch("patronus.agent.run.summarize_chatter")
+    @patch("patronus.agent.run.filter_news")
+    @patch("patronus.agent.run.identify_angles")
+    @patch("patronus.agent.run.build_inventory")
+    def test_db_passed_to_inventory(
+        self,
+        mock_inventory: MagicMock,
+        mock_angles: MagicMock,
+        mock_news: MagicMock,
+        mock_chatter: MagicMock,
+        mock_research: MagicMock,
+        mock_threads: MagicMock,
+        mock_compose: MagicMock,
+        tmp_path: object,
+    ) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        mock_inventory.return_value = ("inventory", "tweet_inventory", {})
+        mock_angles.return_value = "angles"
+        mock_news.return_value = "news"
+        mock_chatter.return_value = "chatter"
+        mock_research.return_value = "research"
+        mock_threads.return_value = "threads"
+        mock_compose.return_value = Digest(generated_at="2025-01-01T00:00:00Z", mode="agent")
 
-        # max_iterations=2: DEEP_DIVE[0], ASSEMBLY[1]. Submit on iteration 0 is ignored.
-        # Need both submits to be in ASSEMBLY: use max_iterations=1 so both attempts are in ASSEMBLY.
-        # But with max_iterations=1, there's only 1 iteration. We need to allow retries.
-        # Actually invalid_submit_retries increases the iteration count implicitly via continue.
-        # Let's use max_iterations=2 where both are ASSEMBLY (max_iterations=2: deep_dive[0], assembly[1]).
-        # First submit at iter 1 (ASSEMBLY) fails → loop continues to... wait, max_iterations=2 means
-        # iter 0 and iter 1. After iter 1 fails, the loop ends. So we need max_iterations=3 to retry.
-        # With max_iterations=3: scan[0], deep_dive[1], assembly[2]. Only iter 2 is ASSEMBLY.
-        # One invalid submit at iter 2, then loop ends — no retry possible.
-        # Solution: use max_iterations=1 for initial attempt in assembly, then the invalid path
-        # sends an error result and continues the loop... but there are no more iterations.
-        # The retry logic works when the loop iterates again. We need max_iterations where
-        # at least 2 iterations are ASSEMBLY. E.g. max_iterations=6: assembly is iterations 4,5.
-        config = _make_config(agent=AgentConfig(max_iterations=6, max_tokens=2000))
+        config = _make_config()
+        plan_and_assemble(config, _make_context(), _make_registry(), db=db)
 
-        # Provide enough mock responses for iterations 0-3 (scan/deep_dive) returning end_turn,
-        # then iterations 4-5 (assembly) attempting submit.
-        mock_cwt.side_effect = [
-            LLMResponse(text="", tool_calls=[], stop_reason="end_turn"),  # iter 0 SCAN → stops loop
-        ]
-        digest = plan_and_assemble(config, _make_context(), _make_registry())
-        assert digest.item_count == 0
+        call_args = mock_inventory.call_args
+        assert call_args.args[1] is db or call_args.kwargs.get("db") is db
 
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_phase_specific_system_prompts(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # max_iterations=3: SCAN[0], DEEP_DIVE[1], ASSEMBLY[2].
-        # Check that the correct system prompt is used for each phase.
-        mock_complete.return_value = "planning thought"
-        mock_cwt.side_effect = [
-            _make_search_response(),          # iter 0 SCAN
-            _make_search_response(),          # iter 1 DEEP_DIVE
-            _make_submit_response(),          # iter 2 ASSEMBLY
-        ]
+    @patch("patronus.agent.run.compose_digest")
+    @patch("patronus.agent.run.pull_threads")
+    @patch("patronus.agent.run.scout_research")
+    @patch("patronus.agent.run.summarize_chatter")
+    @patch("patronus.agent.run.filter_news")
+    @patch("patronus.agent.run.identify_angles")
+    @patch("patronus.agent.run.build_inventory")
+    def test_context_prose_passed_to_steps(
+        self,
+        mock_inventory: MagicMock,
+        mock_angles: MagicMock,
+        mock_news: MagicMock,
+        mock_chatter: MagicMock,
+        mock_research: MagicMock,
+        mock_threads: MagicMock,
+        mock_compose: MagicMock,
+    ) -> None:
+        mock_inventory.return_value = ("inventory", "tweet_inventory", {})
+        mock_angles.return_value = "angles"
+        mock_news.return_value = "news"
+        mock_chatter.return_value = "chatter"
+        mock_research.return_value = "research"
+        mock_threads.return_value = "threads"
+        mock_compose.return_value = Digest(generated_at="2025-01-01T00:00:00Z", mode="agent")
 
-        registry = _make_registry()
-
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
-        plan_and_assemble(config, _make_context(), registry)
-
-        calls = mock_cwt.call_args_list
-        assert calls[0].kwargs["system"] == SCAN_SYSTEM_PROMPT
-        assert calls[1].kwargs["system"] == DEEP_DIVE_SYSTEM_PROMPT
-        assert calls[2].kwargs["system"] == ASSEMBLY_SYSTEM_PROMPT
-
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_context_in_initial_message(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        mock_complete.return_value = "planning thought"
-        mock_cwt.return_value = LLMResponse(
-            text=None,
-            tool_calls=[ToolCall(
-                id="c1",
-                name="submit_digest",
-                input={"sections": []},
-            )],
-            stop_reason="tool_use",
-        )
-
-        config = _make_config(agent=AgentConfig(max_iterations=1, max_tokens=2000))
-        context = _make_context(prose="Reader studies consciousness.")
+        config = _make_config()
+        context = _make_context(prose="PROSE_SENTINEL")
         plan_and_assemble(config, context, _make_registry())
 
-        call_kwargs = mock_cwt.call_args
-        messages = call_kwargs.kwargs["messages"]
-        assert "Reader studies consciousness." in messages[0]["content"]
+        angles_call = mock_angles.call_args
+        assert "PROSE_SENTINEL" in str(angles_call)
 
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_phase_label_in_planning_message(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # Planning messages should include the phase label.
-        mock_complete.return_value = "thought"
-        mock_cwt.return_value = LLMResponse(text="", tool_calls=[], stop_reason="end_turn")
+    @patch("patronus.agent.run.compose_digest")
+    @patch("patronus.agent.run.pull_threads")
+    @patch("patronus.agent.run.scout_research")
+    @patch("patronus.agent.run.summarize_chatter")
+    @patch("patronus.agent.run.filter_news")
+    @patch("patronus.agent.run.identify_angles")
+    @patch("patronus.agent.run.build_inventory")
+    def test_chatter_output_passed_to_compose(
+        self,
+        mock_inventory: MagicMock,
+        mock_angles: MagicMock,
+        mock_news: MagicMock,
+        mock_chatter: MagicMock,
+        mock_research: MagicMock,
+        mock_threads: MagicMock,
+        mock_compose: MagicMock,
+    ) -> None:
+        mock_inventory.return_value = ("inventory", "tweet_inventory", {})
+        mock_angles.return_value = "angles"
+        mock_news.return_value = "news"
+        mock_chatter.return_value = "CHATTER_SENTINEL"
+        mock_research.return_value = "research"
+        mock_threads.return_value = "threads"
+        mock_compose.return_value = Digest(generated_at="2025-01-01T00:00:00Z", mode="agent")
 
-        config = _make_config(agent=AgentConfig(max_iterations=3, max_tokens=2000))
+        config = _make_config()
         plan_and_assemble(config, _make_context(), _make_registry())
 
-        # First planning call (iteration 0, SCAN)
-        first_planning_user_msg = mock_complete.call_args_list[0].kwargs["user_message"]
-        assert "SCAN" in first_planning_user_msg
+        compose_call_kwargs = str(mock_compose.call_args)
+        assert "CHATTER_SENTINEL" in compose_call_kwargs
 
-    @patch("patronus.agent.complete")
-    @patch("patronus.agent.complete_with_tools")
-    def test_conversation_history_carries_across_phases(self, mock_cwt: MagicMock, mock_complete: MagicMock) -> None:
-        # Tool results from iteration 0 should be present in messages at iteration 1.
-        # messages is a mutable list passed by reference, so we check content rather than length.
-        registry = ToolRegistry()
+    @patch("patronus.agent.run.compose_digest")
+    @patch("patronus.agent.run.pull_threads")
+    @patch("patronus.agent.run.scout_research")
+    @patch("patronus.agent.run.summarize_chatter")
+    @patch("patronus.agent.run.filter_news")
+    @patch("patronus.agent.run.identify_angles")
+    @patch("patronus.agent.run.build_inventory")
+    def test_no_db_passes_none_to_inventory(
+        self,
+        mock_inventory: MagicMock,
+        mock_angles: MagicMock,
+        mock_news: MagicMock,
+        mock_chatter: MagicMock,
+        mock_research: MagicMock,
+        mock_threads: MagicMock,
+        mock_compose: MagicMock,
+    ) -> None:
+        mock_inventory.return_value = ("(No inventory available — DB not provided.)", "(No tweet inventory available — DB not provided.)", {})
+        mock_angles.return_value = "angles"
+        mock_news.return_value = "news"
+        mock_chatter.return_value = "chatter"
+        mock_research.return_value = "research"
+        mock_threads.return_value = "threads"
+        mock_compose.return_value = Digest(generated_at="2025-01-01T00:00:00Z", mode="agent")
 
-        class FakeTool:
-            @property
-            def name(self) -> str:
-                return "search_recent"
-            @property
-            def description(self) -> str:
-                return ""
-            @property
-            def input_schema(self) -> dict:
-                return {}
-            def to_definition(self) -> dict:
-                return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
-            def execute(self, **params: object) -> ToolResult:
-                return ToolResult(message="Found items from scan.")
+        config = _make_config()
+        plan_and_assemble(config, _make_context(), _make_registry(), db=None)
 
-        registry._tools["search_recent"] = FakeTool()
-        mock_complete.return_value = "thought"
-        mock_cwt.side_effect = [
-            _make_search_response(),        # iter 0 (DEEP_DIVE, max_iterations=2)
-            _make_submit_response(),        # iter 1 (ASSEMBLY)
-        ]
-
-        config = _make_config(agent=AgentConfig(max_iterations=2, max_tokens=2000))
-        plan_and_assemble(config, _make_context(), registry)
-
-        # The messages at iteration 1 (ASSEMBLY) must contain the tool result from iteration 0.
-        # Since messages is a shared mutable list, both calls see the final state — so we verify
-        # that the tool result content is present at all.
-        assert mock_cwt.call_count == 2
-        final_messages = mock_cwt.call_args_list[1].kwargs["messages"]
-        all_content = str(final_messages)
-        assert "Found items from scan." in all_content
-        # And the ASSEMBLY planning message must come after the tool result message.
-        assembly_planning_idx = next(
-            i for i, m in enumerate(final_messages)
-            if "ASSEMBLY" in str(m.get("content", ""))
-        )
-        tool_result_idx = next(
-            i for i, m in enumerate(final_messages)
-            if "Found items from scan." in str(m.get("content", ""))
-        )
-        assert tool_result_idx < assembly_planning_idx
+        # build_inventory is always called; it receives None as db
+        mock_inventory.assert_called_once()
+        call_args = mock_inventory.call_args
+        db_arg = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("db")
+        assert db_arg is None

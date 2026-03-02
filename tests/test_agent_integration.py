@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from patronus.agent import plan_and_assemble
-from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig, TopicConfig
+from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig, TopicConfig
 from patronus.context import Context
 from patronus.db import Database
 from patronus.tools import ToolRegistry
@@ -25,7 +25,6 @@ def integration_config() -> Config:
         digest=DigestConfig(mode="agent", size=5, max_per_topic=3),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(model="text-embedding-3-small"),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="Technical AI/ML", description="Machine learning and artificial intelligence research, especially mechanistic interpretability and training dynamics"),

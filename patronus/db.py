@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -376,11 +376,37 @@ class Database:
                 ).all()
             )
 
-    def get_over_digested_item_ids(self, threshold: int = 3) -> set[str]:
+    def get_items_since(self, since: str, *, limit: int | None = None) -> list[Item]:
+        with self._session() as session:
+            stmt = (
+                select(Item)
+                .where(Item.ingested_at >= since)
+                .order_by(Item.ingested_at.desc())
+            )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            return list(session.exec(stmt).all())
+
+    def get_last_digest_timestamp(self) -> str | None:
+        with self._session() as session:
+            record = session.exec(
+                select(DigestRecord)
+                .order_by(DigestRecord.generated_at.desc())
+                .limit(1)
+            ).first()
+            return record.generated_at if record else None
+
+    def get_recently_digested_item_ids(self, lookback_days: int = 30) -> set[str]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text("SELECT item_id FROM digest_items GROUP BY item_id HAVING COUNT(*) >= :t"),
-                {"t": threshold},
+                text(
+                    "SELECT DISTINCT di.item_id"
+                    " FROM digest_items di"
+                    " JOIN digests d ON d.id = di.digest_id"
+                    " WHERE d.generated_at >= :cutoff"
+                ),
+                {"cutoff": cutoff},
             ).fetchall()
         return {row[0] for row in rows}
 

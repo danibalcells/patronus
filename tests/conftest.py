@@ -16,3 +16,13 @@ def pytest_configure(config):
             load_dotenv(env_path)
     except ImportError:
         pass
+
+    os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+    os.environ.pop("LANGFUSE_SECRET_KEY", None)
+
+    try:
+        import patronus.observability as obs
+        obs._initialized = False
+        obs._langfuse_client = None
+    except ImportError:
+        pass

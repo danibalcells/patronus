@@ -10,7 +10,6 @@ from patronus.config import (
     DigestConfig,
     EmbeddingConfig,
     PollingConfig,
-    SummarizationConfig,
     TelegramConfig,
     TopicConfig,
 )
@@ -31,7 +30,6 @@ def _make_config(mode: str = "deterministic", **overrides: object) -> Config:
         digest=DigestConfig(mode=mode),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="Technical AI/ML", description="ML research"),

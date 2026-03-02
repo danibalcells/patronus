@@ -248,14 +248,12 @@ class TestSyncScript:
             EmbeddingConfig,
             NotionConfig,
             PollingConfig,
-            SummarizationConfig,
             TelegramConfig,
         )
         return Config(
             digest=DigestConfig(),
             polling=PollingConfig(),
             embedding=EmbeddingConfig(),
-            summarization=SummarizationConfig(),
             telegram=TelegramConfig(),
             topics={},
             agent=AgentConfig(),
@@ -265,7 +263,6 @@ class TestSyncScript:
                 fallback_lookback_days=30,
                 min_entries_threshold=1,
                 max_chars_per_entry=5000,
-                summary_model="anthropic/claude-test",
             ),
             notion_token="secret_test_token",
         )
@@ -360,12 +357,11 @@ class TestSyncScript:
 
     def test_sync_returns_no_config(self, tmp_path: Path) -> None:
         from scripts.sync_notion_mirror import sync
-        from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig
+        from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig
         config = Config(
             digest=DigestConfig(),
             polling=PollingConfig(),
             embedding=EmbeddingConfig(),
-            summarization=SummarizationConfig(),
             telegram=TelegramConfig(),
             topics={},
             notion=None,
@@ -467,12 +463,11 @@ class TestSyncScript:
 
     def test_sync_pages_returns_zero_when_no_notion_config(self, tmp_path: Path) -> None:
         from scripts.sync_notion_mirror import sync_pages
-        from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig
+        from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig
         config = Config(
             digest=DigestConfig(),
             polling=PollingConfig(),
             embedding=EmbeddingConfig(),
-            summarization=SummarizationConfig(),
             telegram=TelegramConfig(),
             topics={},
             notion=None,

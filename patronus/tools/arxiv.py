@@ -4,17 +4,11 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 import feedparser
 
-from patronus.embed import embed_text
 from patronus.tools.base import ITEM_SNIPPET_MAX_CHARS, Tool, ToolResult
-
-if TYPE_CHECKING:
-    from patronus.config import Config
-    from patronus.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +69,6 @@ def _build_search_query(query: str, category: str | None, days: int | None) -> s
 
 
 class SearchArxiv(Tool):
-    def __init__(self, config: Config, db: Database, *, embed: bool = False) -> None:
-        self._config = config
-        self._db = db
-        self._embed = embed
-
     @property
     def name(self) -> str:
         return "search_arxiv"
@@ -91,7 +80,6 @@ class SearchArxiv(Tool):
             "Returns paper titles, authors, abstracts, and links. "
             "Supports sorting by relevance or recency, filtering by category (e.g. cs.LG, cs.AI, stat.ML) "
             "and restricting to papers submitted within the last N days. "
-            "Results are ingested into the local database for future retrieval. "
             "Note: Arxiv does not expose citation counts or download statistics."
         )
 
@@ -187,7 +175,6 @@ class SearchArxiv(Tool):
             return ToolResult(message=f"No Arxiv results found for '{query}'.")
 
         items: list[dict] = []
-        ingested = 0
 
         for entry in feed.entries:
             url = _canonical_arxiv_url(getattr(entry, "id", ""))
@@ -201,37 +188,8 @@ class SearchArxiv(Tool):
             published = getattr(entry, "published", None) or ""
             journal_ref = getattr(entry, "arxiv_journal_ref", None) or ""
 
-            existing = self._db.get_item_by_url(url)
-            if existing is not None:
-                logger.debug("Arxiv paper already in DB, skipping ingest: %s", url)
-                item_id = existing.id
-            else:
-                embedding = None
-                if self._embed and abstract:
-                    try:
-                        embedding = embed_text(abstract, model=self._config.embedding.model)
-                    except Exception:
-                        logger.exception("Embedding failed for Arxiv paper: %s", url)
-
-                try:
-                    item_id = self._db.add_item(
-                        url=url,
-                        source_type="arxiv_search",
-                        item_type="paper",
-                        title=title,
-                        author=authors,
-                        text=abstract,
-                        embedding=embedding,
-                        timestamp=published,
-                    )
-                    ingested += 1
-                    logger.info("Ingested Arxiv paper: %s (id=%s)", url, item_id)
-                except Exception:
-                    logger.exception("Failed to ingest Arxiv paper: %s", url)
-                    item_id = ""
-
             item: dict = {
-                "id": item_id,
+                "id": url,
                 "title": title,
                 "url": url,
                 "author": authors,
@@ -247,16 +205,10 @@ class SearchArxiv(Tool):
 
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} Arxiv results for '{query}' ({ingested} newly ingested).",
+            message=f"Found {len(items)} Arxiv results for '{query}'.",
         )
 
 
-def register_arxiv_tools(
-    registry: "ToolRegistry",
-    config: "Config",
-    db: "Database",
-    *,
-    embed: bool = False,
-) -> None:
+def register_arxiv_tools(registry: "ToolRegistry") -> None:
     from patronus.tools import ToolRegistry as _TR  # noqa: F401
-    registry.register(SearchArxiv(config, db, embed=embed))
+    registry.register(SearchArxiv())

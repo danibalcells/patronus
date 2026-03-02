@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -256,10 +257,11 @@ class TestFeeds:
         assert len(db.get_active_feeds()) == 2
 
 
-class TestOverDigestedItems:
-    def _save_digest_with_item(self, db: Database, item_id: str) -> None:
+class TestRecentlyDigestedItems:
+    def _save_digest_with_item(self, db: Database, item_id: str, days_ago: int = 0) -> None:
+        generated_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
         db.save_digest(
-            generated_at="2026-02-01T08:00:00Z",
+            generated_at=generated_at,
             item_count=1,
             formatted_text=None,
             items=[{"item_id": item_id, "summary": "s", "score": 1.0, "matched_topic": ""}],
@@ -267,42 +269,44 @@ class TestOverDigestedItems:
 
     def test_empty_when_no_digests(self, db: Database) -> None:
         db.add_item(url="https://example.com/a", source_type="rss")
-        assert db.get_over_digested_item_ids() == set()
+        assert db.get_recently_digested_item_ids() == set()
 
-    def test_item_below_threshold_not_returned(self, db: Database) -> None:
+    def test_item_in_recent_digest_is_returned(self, db: Database) -> None:
         item_id = db.add_item(url="https://example.com/a", source_type="rss")
-        self._save_digest_with_item(db, item_id)
-        self._save_digest_with_item(db, item_id)
-        assert item_id not in db.get_over_digested_item_ids()
+        self._save_digest_with_item(db, item_id, days_ago=0)
+        assert item_id in db.get_recently_digested_item_ids()
 
-    def test_item_at_threshold_is_returned(self, db: Database) -> None:
+    def test_item_digested_within_lookback_is_returned(self, db: Database) -> None:
         item_id = db.add_item(url="https://example.com/a", source_type="rss")
-        self._save_digest_with_item(db, item_id)
-        self._save_digest_with_item(db, item_id)
-        self._save_digest_with_item(db, item_id)
-        assert item_id in db.get_over_digested_item_ids()
+        self._save_digest_with_item(db, item_id, days_ago=29)
+        assert item_id in db.get_recently_digested_item_ids()
 
-    def test_item_above_threshold_is_returned(self, db: Database) -> None:
+    def test_item_digested_outside_lookback_not_returned(self, db: Database) -> None:
         item_id = db.add_item(url="https://example.com/a", source_type="rss")
-        for _ in range(5):
-            self._save_digest_with_item(db, item_id)
-        assert item_id in db.get_over_digested_item_ids()
+        self._save_digest_with_item(db, item_id, days_ago=31)
+        assert item_id not in db.get_recently_digested_item_ids()
 
-    def test_only_over_threshold_items_returned(self, db: Database) -> None:
-        over_id = db.add_item(url="https://example.com/over", source_type="rss")
-        under_id = db.add_item(url="https://example.com/under", source_type="rss")
-        for _ in range(3):
-            self._save_digest_with_item(db, over_id)
-        self._save_digest_with_item(db, under_id)
+    def test_only_recent_items_returned(self, db: Database) -> None:
+        recent_id = db.add_item(url="https://example.com/recent", source_type="rss")
+        old_id = db.add_item(url="https://example.com/old", source_type="rss")
+        self._save_digest_with_item(db, recent_id, days_ago=5)
+        self._save_digest_with_item(db, old_id, days_ago=45)
 
-        result = db.get_over_digested_item_ids()
-        assert over_id in result
-        assert under_id not in result
+        result = db.get_recently_digested_item_ids()
+        assert recent_id in result
+        assert old_id not in result
 
-    def test_custom_threshold(self, db: Database) -> None:
+    def test_item_returned_once_even_if_digested_multiple_times_recently(self, db: Database) -> None:
         item_id = db.add_item(url="https://example.com/a", source_type="rss")
-        self._save_digest_with_item(db, item_id)
-        self._save_digest_with_item(db, item_id)
+        self._save_digest_with_item(db, item_id, days_ago=1)
+        self._save_digest_with_item(db, item_id, days_ago=2)
+        result = db.get_recently_digested_item_ids()
+        assert item_id in result
+        assert list(result).count(item_id) == 1
 
-        assert item_id not in db.get_over_digested_item_ids(threshold=3)
-        assert item_id in db.get_over_digested_item_ids(threshold=2)
+    def test_custom_lookback_days(self, db: Database) -> None:
+        item_id = db.add_item(url="https://example.com/a", source_type="rss")
+        self._save_digest_with_item(db, item_id, days_ago=10)
+
+        assert item_id in db.get_recently_digested_item_ids(lookback_days=30)
+        assert item_id not in db.get_recently_digested_item_ids(lookback_days=5)

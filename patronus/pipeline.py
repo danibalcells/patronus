@@ -9,6 +9,7 @@ from patronus.context import Context, PersonalizationSource, merge_sources
 from patronus.db import Database
 from patronus.digest import Digest, generate_digest_deterministic
 from patronus.interests import InterestsSource
+from patronus.observability import pipeline_run
 from patronus.output import Output
 from patronus.output.terminal import TerminalOutput
 from patronus.tools import ToolRegistry
@@ -34,9 +35,9 @@ def _build_default_sources(config: Config, db: Database) -> list[Personalization
 def _build_tool_registry(config: Config, db: Database) -> ToolRegistry:
     registry = ToolRegistry()
     register_local_tools(registry, config, db)
-    register_arxiv_tools(registry, config, db)
+    register_arxiv_tools(registry)
     register_notion_tools(registry, config)
-    register_openalex_tools(registry, config, db)
+    register_openalex_tools(registry, config)
     return registry
 
 
@@ -59,18 +60,28 @@ class DigestPipeline:
         return generate_digest_deterministic(self._config, self._db)
 
     def run(self, *, skip_penalty: bool = False, notion_force_refresh: bool = False) -> Digest:
-        if self._config.digest.mode == "agent":
-            digest = self._generate_agent(notion_force_refresh=notion_force_refresh)
-        else:
-            digest = generate_digest_deterministic(self._config, self._db, skip_penalty=skip_penalty)
+        with pipeline_run(
+            "digest-pipeline",
+            {"mode": self._config.digest.mode, "outputs": [type(o).__name__ for o in self._outputs]},
+        ) as run_obs:
+            if self._config.digest.mode == "agent":
+                digest = self._generate_agent(notion_force_refresh=notion_force_refresh)
+            else:
+                digest = generate_digest_deterministic(self._config, self._db, skip_penalty=skip_penalty)
 
-        self._save_digest(digest)
+            self._save_digest(digest)
 
-        for output in self._outputs:
-            try:
-                output.send(digest, self._config)
-            except Exception:
-                logger.exception("Output %s failed", type(output).__name__)
+            for output in self._outputs:
+                try:
+                    output.send(digest, self._config)
+                except Exception:
+                    logger.exception("Output %s failed", type(output).__name__)
+
+            run_obs.update(output={
+                "sections": len(digest.sections),
+                "items": digest.item_count,
+                "section_types": [s.type.value for s in digest.sections],
+            })
 
         return digest
 
@@ -88,7 +99,7 @@ class DigestPipeline:
         registry = _build_tool_registry(self._config, self._db)
         logger.info("Tool registry: %s", registry.tool_names)
 
-        digest = plan_and_assemble(self._config, context, registry)
+        digest = plan_and_assemble(self._config, context, registry, db=self._db)
 
         if digest.item_count == 0:
             logger.warning("Agent produced empty digest, falling back to deterministic")

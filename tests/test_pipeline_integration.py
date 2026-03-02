@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig, TopicConfig
+from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig, TopicConfig
 from patronus.context import Context, PersonalizationSource
 from patronus.db import Database
 from patronus.pipeline import DigestPipeline
@@ -23,7 +23,6 @@ def integration_config() -> Config:
         digest=DigestConfig(mode="agent", size=10, max_per_topic=3),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(model="text-embedding-3-small"),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="Technical AI/ML", description="Machine learning research"),
@@ -289,7 +288,6 @@ class TestPipelineDeterministicIntegration:
             digest=DigestConfig(mode="deterministic", size=3, max_per_topic=2),
             polling=PollingConfig(),
             embedding=EmbeddingConfig(model="text-embedding-3-small"),
-            summarization=SummarizationConfig(model="claude-haiku-4-5-20251001"),
             telegram=TelegramConfig(),
             topics={
                 "ml": TopicConfig(
@@ -297,6 +295,7 @@ class TestPipelineDeterministicIntegration:
                     description="Machine learning research, especially transformer models and attention mechanisms",
                 ),
             },
+            agent=AgentConfig(digest_summary_model="claude-haiku-4-5-20251001"),
         )
         
         db = Database(db_path=str(tmp_path) + "/test_det.db")

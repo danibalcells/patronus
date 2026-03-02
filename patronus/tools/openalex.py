@@ -6,12 +6,10 @@ from typing import TYPE_CHECKING
 import pyalex
 from pyalex import Works
 
-from patronus.embed import embed_text
 from patronus.tools.base import ITEM_SNIPPET_MAX_CHARS, Tool, ToolResult
 
 if TYPE_CHECKING:
     from patronus.config import Config
-    from patronus.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -134,52 +132,12 @@ def _unrecognised_id_message(raw: str) -> str:
     )
 
 
-def _ingest_work(work: dict, db: "Database", config: "Config", *, embed: bool, source_type: str) -> tuple[str, bool]:
-    """Ingest a work dict into the DB. Returns (item_id, was_new)."""
+def _build_item_dict(work: dict) -> dict:
     url = _canonical_url(work)
-    if not url:
-        return "", False
-
-    existing = db.get_item_by_url(url)
-    if existing is not None:
-        logger.debug("OpenAlex paper already in DB, skipping ingest: %s", url)
-        return existing.id, False
-
-    title = (work.get("title") or "").strip()
-    abstract = (work["abstract"] or "").strip() if work.get("abstract_inverted_index") else ""
-    authors = _parse_authors(work)
-    published = work.get("publication_date") or ""
-
-    embedding = None
-    if embed and abstract:
-        try:
-            embedding = embed_text(abstract, model=config.embedding.model)
-        except Exception:
-            logger.exception("Embedding failed for OpenAlex paper: %s", url)
-
-    try:
-        item_id = db.add_item(
-            url=url,
-            source_type=source_type,
-            item_type="paper",
-            title=title,
-            author=authors,
-            text=abstract,
-            embedding=embedding,
-            timestamp=published,
-        )
-        logger.info("Ingested OpenAlex paper: %s (id=%s)", url, item_id)
-        return item_id, True
-    except Exception:
-        logger.exception("Failed to ingest OpenAlex paper: %s", url)
-        return "", False
-
-
-def _build_item_dict(work: dict, item_id: str) -> dict:
     return {
-        "id": item_id,
+        "id": url,
         "title": (work.get("title") or "").strip(),
-        "url": _canonical_url(work),
+        "url": url,
         "author": _parse_authors(work),
         "source": "openalex",
         "item_type": "paper",
@@ -191,10 +149,8 @@ def _build_item_dict(work: dict, item_id: str) -> dict:
 
 
 class SearchOpenAlex(Tool):
-    def __init__(self, config: Config, db: Database, *, embed: bool = False) -> None:
+    def __init__(self, config: "Config") -> None:
         self._config = config
-        self._db = db
-        self._embed = embed
 
     @property
     def name(self) -> str:
@@ -207,7 +163,6 @@ class SearchOpenAlex(Tool):
             "Broader coverage than Arxiv — includes philosophy, linguistics, cognitive science, "
             "social sciences, and all natural sciences. "
             "Returns titles, authors, abstracts, DOIs, citation counts, and topic tags. "
-            "Results are ingested into the local database for future retrieval. "
             "Use the 'field' parameter to restrict results to a discipline."
         )
 
@@ -296,28 +251,16 @@ class SearchOpenAlex(Tool):
         if not works:
             return ToolResult(message=f"No OpenAlex results found for '{query}'.")
 
-        items: list[dict] = []
-        ingested = 0
-
-        for work in works:
-            if not _canonical_url(work):
-                continue
-            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_search")
-            if is_new:
-                ingested += 1
-            items.append(_build_item_dict(work, item_id))
-
+        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} OpenAlex results for '{query}' ({ingested} newly ingested).",
+            message=f"Found {len(items)} OpenAlex results for '{query}'.",
         )
 
 
 class GetCitingPapers(Tool):
-    def __init__(self, config: "Config", db: "Database", *, embed: bool = False) -> None:
+    def __init__(self, config: "Config") -> None:
         self._config = config
-        self._db = db
-        self._embed = embed
 
     @property
     def name(self) -> str:
@@ -329,8 +272,7 @@ class GetCitingPapers(Tool):
             "Find papers that cite a given work, identified by DOI or OpenAlex ID. "
             "Use this to discover recent research building on a landmark paper you already know about. "
             "Accepts DOI in any form (e.g. '10.48550/arxiv.2405.15943', 'https://doi.org/...') "
-            "or an OpenAlex work ID (e.g. 'W2741809807'). "
-            "Results are ingested into the local database for future retrieval."
+            "or an OpenAlex work ID (e.g. 'W2741809807')."
         )
 
     @property
@@ -395,28 +337,16 @@ class GetCitingPapers(Tool):
         if not works:
             return ToolResult(message=f"No citing papers found for '{raw_id}'.")
 
-        items: list[dict] = []
-        ingested = 0
-
-        for work in works:
-            if not _canonical_url(work):
-                continue
-            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_citing")
-            if is_new:
-                ingested += 1
-            items.append(_build_item_dict(work, item_id))
-
+        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} papers citing '{raw_id}' ({ingested} newly ingested).",
+            message=f"Found {len(items)} papers citing '{raw_id}'.",
         )
 
 
 class GetReferencedPapers(Tool):
-    def __init__(self, config: "Config", db: "Database", *, embed: bool = False) -> None:
+    def __init__(self, config: "Config") -> None:
         self._config = config
-        self._db = db
-        self._embed = embed
 
     @property
     def name(self) -> str:
@@ -428,8 +358,7 @@ class GetReferencedPapers(Tool):
             "Fetch the papers cited by a given work — its bibliography. "
             "Use this to trace the intellectual lineage of a paper or find foundational "
             "works in a field. Accepts the same identifier formats as get_citing_papers. "
-            "Results are sorted by citation count by default (most influential references first) "
-            "and ingested into the local database for future retrieval."
+            "Results are sorted by citation count by default (most influential references first)."
         )
 
     @property
@@ -497,38 +426,19 @@ class GetReferencedPapers(Tool):
             logger.exception("Failed to fetch referenced works for %r", work_id)
             return ToolResult(message=f"Failed to fetch references for '{raw_id}'.")
 
-        items: list[dict] = []
-        ingested = 0
-
-        for work in works:
-            if not _canonical_url(work):
-                continue
-            item_id, is_new = _ingest_work(work, self._db, self._config, embed=self._embed, source_type="openalex_references")
-            if is_new:
-                ingested += 1
-            items.append(_build_item_dict(work, item_id))
-
+        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
         total_refs = len(ref_ids)
         return ToolResult(
             items=items,
-            message=(
-                f"Found {len(items)} references for '{raw_id}' "
-                f"({total_refs} total in bibliography, {ingested} newly ingested)."
-            ),
+            message=f"Found {len(items)} references for '{raw_id}' ({total_refs} total in bibliography).",
         )
 
 
-def register_openalex_tools(
-    registry: "ToolRegistry",
-    config: "Config",
-    db: "Database",
-    *,
-    embed: bool = False,
-) -> None:
+def register_openalex_tools(registry: "ToolRegistry", config: "Config") -> None:
     from patronus.tools import ToolRegistry as _TR  # noqa: F401
     if config.openalex_api_key:
-        registry.register(SearchOpenAlex(config, db, embed=embed))
-        registry.register(GetCitingPapers(config, db, embed=embed))
-        registry.register(GetReferencedPapers(config, db, embed=embed))
+        registry.register(SearchOpenAlex(config))
+        registry.register(GetCitingPapers(config))
+        registry.register(GetReferencedPapers(config))
     else:
         logger.warning("OPENALEX_API_KEY not set — OpenAlex tools disabled")

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig, TopicConfig
+from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig, TopicConfig
 from patronus.db import Database
 from patronus.tools import ToolRegistry
 from patronus.tools.local import SearchBySource, SearchByTopic, SearchRecent, SearchSimilar, register_local_tools
@@ -23,7 +23,6 @@ def integration_config() -> Config:
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(model="text-embedding-3-small"),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(

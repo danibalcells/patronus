@@ -68,12 +68,12 @@ class SearchSimilar(Tool):
             return ToolResult(message="Query string is required.")
 
         query_embedding = embed_text(query, model=self._config.embedding.model)
-        over_digested = self._db.get_over_digested_item_ids()
+        recently_digested = self._db.get_recently_digested_item_ids()
         items = self._db.get_unread_items()
 
         scored: list[tuple[float, Item]] = []
         for item in items:
-            if item.id in over_digested:
+            if item.id in recently_digested:
                 continue
             if item.embedding is None:
                 continue
@@ -133,12 +133,12 @@ class SearchRecent(Tool):
         n = int(params.get("n", 15))
 
         now = datetime.now(timezone.utc)
-        over_digested = self._db.get_over_digested_item_ids()
+        recently_digested = self._db.get_recently_digested_item_ids()
         items = self._db.get_unread_items()
 
         recent: list[Item] = []
         for item in items:
-            if item.id in over_digested:
+            if item.id in recently_digested:
                 continue
             if not item.timestamp:
                 continue
@@ -201,15 +201,15 @@ class SearchByTopic(Tool):
         if not topic:
             return ToolResult(message="Topic key is required.")
 
-        over_digested = self._db.get_over_digested_item_ids()
+        recently_digested = self._db.get_recently_digested_item_ids()
         with self._db._session() as session:
             query = select(Item).where(
                 Item.read == False,
                 Item.topic_cluster == topic,
-            ).order_by(Item.timestamp.desc()).limit(n + len(over_digested))
+            ).order_by(Item.timestamp.desc()).limit(n + len(recently_digested))
             raw = list(session.exec(query).all())
 
-        items = [item for item in raw if item.id not in over_digested][:n]
+        items = [item for item in raw if item.id not in recently_digested][:n]
 
         return ToolResult(
             items=[_item_to_dict(item) for item in items],
@@ -259,17 +259,17 @@ class SearchBySource(Tool):
         source_name = str(params.get("source_name", "")) if params.get("source_name") else None
         n = int(params.get("n", 10))
 
-        over_digested = self._db.get_over_digested_item_ids()
+        recently_digested = self._db.get_recently_digested_item_ids()
         with self._db._session() as session:
             query = select(Item).where(Item.read == False)
             if source_type:
                 query = query.where(Item.source_type == source_type)
             if source_name:
                 query = query.where(Item.source.contains(source_name))
-            query = query.order_by(Item.timestamp.desc()).limit(n + len(over_digested))
+            query = query.order_by(Item.timestamp.desc()).limit(n + len(recently_digested))
             raw = list(session.exec(query).all())
 
-        items = [item for item in raw if item.id not in over_digested][:n]
+        items = [item for item in raw if item.id not in recently_digested][:n]
 
         msg_parts = []
         if source_type:

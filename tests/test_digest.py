@@ -7,11 +7,11 @@ import numpy as np
 import pytest
 
 from patronus.config import (
+    AgentConfig,
     Config,
     DigestConfig,
     EmbeddingConfig,
     PollingConfig,
-    SummarizationConfig,
     TelegramConfig,
     TopicConfig,
 )
@@ -39,12 +39,12 @@ def _make_config(**overrides: object) -> Config:
         digest=DigestConfig(**(overrides.get("digest", {}))),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="Technical AI/ML", description="ML research"),
             "phil": TopicConfig(name="Philosophy", description="Philosophy of mind"),
         },
+        agent=AgentConfig(),
     )
 
 
@@ -243,7 +243,11 @@ class TestDigestDataclass:
 
 class TestSectionType:
     def test_all_values(self) -> None:
-        expected = {"long_form_pick", "paper_roundup", "headlines", "serendipity", "chatter", "from_notes"}
+        expected = {
+            "long_form_pick", "paper_roundup", "headlines",
+            "whats_new", "research_roundup", "threads",
+            "serendipity", "chatter", "from_notes",
+        }
         assert {st.value for st in SectionType} == expected
 
     def test_string_enum(self) -> None:

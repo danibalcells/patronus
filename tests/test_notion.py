@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from patronus.config import Config, DigestConfig, EmbeddingConfig, NotionConfig, PollingConfig, SummarizationConfig, TelegramConfig
+from patronus.config import AgentConfig, Config, DigestConfig, EmbeddingConfig, NotionConfig, PollingConfig, TelegramConfig
 from patronus.context import PersonalizationSource
 from patronus.db import Database
 from patronus.notion import (
@@ -22,9 +22,10 @@ def _make_config(**overrides: object) -> Config:
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(),
-        summarization=SummarizationConfig(),
+
         telegram=TelegramConfig(),
         topics={},
+        agent=AgentConfig(),
         notion=NotionConfig(
             database_ids={
                 "journal": "db-journal-id",
@@ -34,7 +35,6 @@ def _make_config(**overrides: object) -> Config:
             fallback_lookback_days=30,
             min_entries_threshold=3,
             max_chars_per_entry=3000,
-            summary_model="google/gemini-2.5-flash-lite",
         ),
         notion_token="secret_test_token",
     )
@@ -567,10 +567,10 @@ class TestNotionSourceGetContext:
     def test_passes_correct_model(self, mock_complete: MagicMock) -> None:
         mock_client = MagicMock()
         config = _make_config(
+            agent=AgentConfig(notion_context_model="anthropic/claude-haiku-4-5-20251001"),
             notion=NotionConfig(
                 database_ids={"journal": "db-j"},
                 min_entries_threshold=1,
-                summary_model="anthropic/claude-haiku-4-5-20251001",
             )
         )
 

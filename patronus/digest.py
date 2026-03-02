@@ -19,6 +19,9 @@ class SectionType(str, Enum):
     LONG_FORM_PICK = "long_form_pick"
     PAPER_ROUNDUP = "paper_roundup"
     HEADLINES = "headlines"
+    WHATS_NEW = "whats_new"
+    RESEARCH_ROUNDUP = "research_roundup"
+    THREADS = "threads"
     SERENDIPITY = "serendipity"
     CHATTER = "chatter"
     FROM_NOTES = "from_notes"
@@ -119,7 +122,7 @@ def generate_digest_deterministic(config: Config, db: Database, *, skip_penalty:
                 title=scored_item.item.title or "",
                 text=scored_item.item.text or "",
                 interest_description=interest_text,
-                model=config.summarization.model,
+                model=config.agent.digest_summary_model if config.agent else "",
             )
         except Exception:
             logger.exception("Failed to summarize item %s", scored_item.item.id)

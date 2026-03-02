@@ -11,16 +11,18 @@ polling:
 embedding:
   model: "text-embedding-3-small"
 
-summarization:
-  model: "claude-haiku-4-5-20251001"
-
 agent:
-  model: "anthropic/claude-haiku-4-5-20251001"        # scan + deep dive
-  # model: "anthropic/claude-sonnet-4-5-20250929"
-  planning_model: "anthropic/claude-sonnet-4-5-20250929"
-  assembly_model: "anthropic/claude-sonnet-4-5-20250929"
-  max_iterations: 7
-  max_tokens: 5000
+  model: "anthropic/claude-sonnet-4-5-20250929"
+  angles_model: "google/gemini-2.5-flash-lite"
+  news_model: "google/gemini-2.5-flash-lite"
+  chatter_model: "google/gemini-2.5-flash-lite"
+  research_model: "anthropic/claude-sonnet-4-5-20250929"
+  threads_model: "anthropic/claude-sonnet-4-5-20250929"
+  compose_model: "anthropic/claude-sonnet-4-5-20250929"
+  notion_context_model: "anthropic/claude-sonnet-4-5-20250929"
+  digest_summary_model: "google/gemini-2.5-flash-lite"
+  inventory_lookback_days: 2
+  max_tokens: 8000
 
 telegram:
   chat_id: "1646448265"
@@ -38,6 +40,4 @@ notion:
   min_entries_threshold: 3
   max_chars_per_entry: 10000
   cache_ttl_hours: 24
-  summary_model: "anthropic/claude-sonnet-4-5-20250929"
-  # summary_model: "google/gemini-3-flash-preview"
   mirror_path: "notion_mirror.sqlite3"

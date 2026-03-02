@@ -5,7 +5,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, SummarizationConfig, TelegramConfig, TopicConfig
+from patronus.config import Config, DigestConfig, EmbeddingConfig, PollingConfig, TelegramConfig, TopicConfig
 from patronus.interests import load_interest_vectors
 
 
@@ -15,7 +15,6 @@ def config() -> Config:
         digest=DigestConfig(),
         polling=PollingConfig(),
         embedding=EmbeddingConfig(model="text-embedding-3-small"),
-        summarization=SummarizationConfig(),
         telegram=TelegramConfig(),
         topics={
             "ml": TopicConfig(name="ML", description="Machine learning research."),
@@ -68,7 +67,6 @@ class TestLoadInterestVectors:
             digest=DigestConfig(),
             polling=PollingConfig(),
             embedding=EmbeddingConfig(),
-            summarization=SummarizationConfig(),
             telegram=TelegramConfig(),
             topics={},
         )

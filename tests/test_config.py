@@ -21,8 +21,6 @@ def config_dir(tmp_path: Path) -> Path:
         "  interval_hours: 4\n"
         "embedding:\n"
         "  model: 'text-embedding-3-large'\n"
-        "summarization:\n"
-        "  model: 'claude-sonnet-4-20250514'\n"
         "telegram:\n"
         "  chat_id: '12345'\n"
     )

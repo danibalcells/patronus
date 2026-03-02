@@ -32,6 +32,22 @@ class _NoopObs:
 
 
 @contextmanager
+def pipeline_run(
+    name: str,
+    input: dict[str, Any],
+) -> Generator[_NoopObs | Any, None, None]:
+    lf = _get_langfuse()
+    if lf is None:
+        yield _NoopObs()
+        return
+    with lf.start_as_current_observation(name=name, as_type="trace", input=input) as obs:
+        try:
+            yield obs
+        finally:
+            lf.flush()
+
+
+@contextmanager
 def agent_run(
     name: str,
     input: dict[str, Any],

@@ -35,6 +35,15 @@ class AgentConfig:
     max_tokens: int = 4096
     planning_model: str = ""
     assembly_model: str = ""
+    angles_model: str = ""
+    news_model: str = ""
+    chatter_model: str = ""
+    research_model: str = ""
+    threads_model: str = ""
+    compose_model: str = ""
+    notion_context_model: str = "anthropic/claude-sonnet-4-20250514"
+    digest_summary_model: str = "google/gemini-2.5-flash-lite"
+    inventory_lookback_days: int = 2
 
 
 @dataclass
@@ -46,10 +55,6 @@ class PollingConfig:
 class EmbeddingConfig:
     model: str = "text-embedding-3-small"
 
-
-@dataclass
-class SummarizationConfig:
-    model: str = "claude-sonnet-4-20250514"
 
 
 @dataclass
@@ -64,7 +69,6 @@ class NotionConfig:
     fallback_lookback_days: int = 30
     min_entries_threshold: int = 3
     max_chars_per_entry: int = 3000
-    summary_model: str = "google/gemini-2.5-flash-lite"
     cache_ttl_hours: int = 24
     mirror_path: str = ""
 
@@ -74,7 +78,6 @@ class Config:
     digest: DigestConfig
     polling: PollingConfig
     embedding: EmbeddingConfig
-    summarization: SummarizationConfig
     telegram: TelegramConfig
     topics: dict[str, TopicConfig]
     agent: AgentConfig | None = None
@@ -122,7 +125,6 @@ def load_config(
         digest=DigestConfig(**raw.get("digest", {})),
         polling=PollingConfig(**raw.get("polling", {})),
         embedding=EmbeddingConfig(**raw.get("embedding", {})),
-        summarization=SummarizationConfig(**raw.get("summarization", {})),
         telegram=TelegramConfig(**raw.get("telegram", {})),
         topics=topics,
         agent=agent_cfg,

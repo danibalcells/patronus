@@ -1,428 +1,113 @@
 # Patronus
 
-A personal research and reading assistant that aggregates content from multiple sources, filters at volume, and delivers a curated daily digest. The system monitors dozens of feeds spanning technical ML research, tech commentary, philosophy, linguistics, and more — selecting high-signal items and summarizing them so you don't have to triage manually.
+A personal research and reading assistant. It aggregates content from dozens of RSS feeds, builds a daily inventory, and uses an LLM agent to compose a newspaper-style digest — personalized by live context from Notion. By default the digest is sent to Telegram and printed to the terminal; it can also be saved to Readwise Reader or published as an XML feed.
 
-The project is implemented in stages, each independently useful. Stage 1 uses a deterministic embedding-based pipeline. Stage 2 replaces the fixed pipeline with an LLM agent that plans a newspaper-style digest using retrieval tools, personalized by live context from Notion.
+## How it works
 
-## Stage 1 architecture - being phased out
+Three scheduled jobs run each day:
 
-Stage 1 is a deterministic pipeline: embed items, rank by cosine similarity against static interest descriptions, select top N with diversity constraints, summarize with an LLM, deliver via Telegram.
+**Ingestion** (every 2h, cron): `scripts/poll_feeds.py` polls active feeds, extracts full text with trafilatura, embeds with OpenAI, and stores items in SQLite.
 
-### Module structure
+**Notion mirror sync** (nightly, 2am cron): `scripts/sync_notion_mirror.py` incrementally syncs Notion pages (journal, work diary, library highlights) into a local SQLite mirror with an FTS5 full-text index. This keeps Notion API calls out of the digest hot path.
 
-```
-patronus/                   # Core library — all business logic lives here
-├── __init__.py
-├── config.py               # Load YAML config + env vars → Config dataclass
-├── db.py                   # SQLModel models (Item, Feed) + Database class
-├── ingest.py               # Feed polling, content extraction, manual URL add
-├── embed.py                # Embedding API wrapper (text-embedding-3-small)
-├── interests.py            # Load interest vectors (YAML → embed)
-├── rank.py                 # Cosine similarity, recency boost, diversity selection
-├── summarize.py            # Claude API for contextual summaries
-├── digest.py               # Orchestrator: rank → select → summarize → Digest
-└── telegram.py             # Bot handlers + direct message sending
+**Digest generation** (daily, 8am cron): `scripts/send_digest.py` runs `DigestPipeline`, which:
 
-scripts/                    # Thin entry points — each is ~20 lines
-├── poll_feeds.py           # Cron: poll all active feeds, ingest new items
-├── send_digest.py          # Cron: generate digest, send via Telegram
-├── seed_feeds.py           # One-off: seed DB from feeds file
-└── run_bot.py              # Systemd: start the Telegram bot (long-running)
+1. **Reader context** — fetches recent Notion entries (journal, work diary, library highlights), summarizes them into a prose context document via an LLM, and caches the result for 24h. The summary captures active projects, open questions, peripheral interests, and recurring emotional themes.
 
-config/
-├── config.yaml             # Schedule, digest size, model names, Telegram chat ID
-└── interests.yaml          # Static interest descriptions (one paragraph per topic)
+2. **Inventory** — queries all items ingested since the last digest, groups them by source feed, flags previously-featured items and URL-based story clusters. No LLM involved.
 
-tests/
-└── ...
-```
+3. **Angles** (1 LLM call) — reads the inventory and reader context together, produces ~10–15 editorial hypotheses: what threads connect today's content to the reader's current thinking, which topics are over-saturated, which peripheral interests have hooks.
 
-### Module responsibilities
+4. **News filter** (1 LLM call) — selects and summarizes news items from the inventory; consolidates story clusters; flags items that might also belong in research or threads.
 
-**`config.py`** — Single source of truth for runtime configuration. Loads `config/config.yaml` for schedule, model settings, Telegram chat ID, digest size, etc. Loads `config/interests.yaml` for per-topic interest descriptions. API keys come from env vars (`.env`), not YAML. Exposes a `Config` dataclass that other modules accept as a parameter.
+5. **Research scout** (1–2 LLM calls with tools) — starts from inventory papers, issues parallel tool calls to deepen the view (related older work, OpenAlex, Notion search), and produces a curated paper list with summaries and Notion connection notes.
 
-**`db.py`** — SQLModel models (`Item`, `Feed`) and a `Database` class that wraps all SQLite access. Feed URLs are seeded from a file but the DB is the source of truth for feed state. No other module touches SQLite directly.
+6. **Thread puller** (2–3 LLM calls with tools) — finds content worth the reader's time *right now* by following the angles and peripheral interest hooks. The only genuinely exploratory step: issues parallel tool calls per iteration, follows leads, surfaces both main-work relevance and serendipitous connections.
 
-**`embed.py`** — Thin wrapper around the OpenAI embedding API. Exposes `embed_text()` and `embed_batch()`. Stateless — callers manage caching.
+7. **Compose** (1 LLM call) — assembles the final digest from all upstream outputs, handles cross-section dedup, writes the final summaries, and delivers via `submit_digest`.
 
-**`interests.py`** — Loads interest descriptions from `config/interests.yaml` and produces embedding vectors via `embed.py`. Downstream code (`rank.py`, `digest.py`) receives `dict[str, np.ndarray]` and doesn't care where it came from.
+The agent path falls back to a deterministic rank → select → summarize pipeline if Notion context is unavailable or the agent produces an empty digest. Set `digest.mode: "deterministic"` in config to always use the deterministic path.
 
-**`ingest.py`** — Feed polling and content extraction. `poll_feeds()` iterates active feeds from the DB, parses with `feedparser`, deduplicates by URL, extracts full text with `trafilatura`, embeds via `embed.py`, and stores via `db.add_item()`. `ingest_url()` handles manual URL adds (same pipeline, single URL).
-
-**`rank.py`** — Ranking and selection. `rank_unread()` loads all unread items, computes cosine similarity against each topic centroid (max across centroids), applies a gentle recency boost, and returns a sorted list of `ScoredItem`s. `select_digest()` applies a topic diversity constraint (no more than ~3 from any single cluster) and returns the top N. All numpy, no API calls.
-
-**`summarize.py`** — Calls the Claude API to generate 2–3 sentence contextual summaries for selected items, given the matched interest description as context. One API call per item.
-
-**`digest.py`** — Orchestrates the full daily digest pipeline: load interest vectors → rank unread items → select top ~7 → summarize each → build a `Digest` dataclass. Also handles formatting for Telegram delivery. Both the `/digest` bot command and the cron script call the same `generate_digest()` function.
-
-**`telegram.py`** — Telegram bot using `python-telegram-bot`. Handles `/add <url>` (triggers `ingest.ingest_url()`), `/digest` (triggers `digest.generate_digest()`), and `/status`. Also exposes `send_digest()` for the cron script to send messages without a running bot process.
-
-### Data flow
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                        SCHEDULING                        │
-│                                                          │
-│  Cron (every 2h):         Cron (daily 8am):              │
-│  scripts/poll_feeds.py    scripts/send_digest.py         │
-│         │                        │                       │
-│         ▼                        ▼                       │
-│    ingest.poll_feeds()     digest.generate_digest()      │
-│         │                        │                       │
-│    ┌────┴────┐          ┌────────┼──────────┐            │
-│    ▼         ▼          ▼        ▼          ▼            │
-│  embed    db.add    interests  rank    summarize         │
-│    │      _item()   .load()  .rank()  .summarize()       │
-│    │         │          │        │          │             │
-│    │         ▼          │        │          │             │
-│    └──────►SQLite◄──────┘────────┘          │             │
-│                                             ▼            │
-│  Systemd (long-running):              telegram           │
-│  scripts/run_bot.py                   .send_digest()     │
-│    /add → ingest.ingest_url()                            │
-│    /digest → digest.generate_digest()                    │
-│    /status → db queries                                  │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Dependency graph
-
-No cycles. Each module depends only on modules above it in this list:
-
-```
-config         ← (no internal deps)
-db             ← (no internal deps)
-embed          ← config
-interests      ← config, embed
-ingest         ← config, db, embed
-rank           ← config, db
-summarize      ← config
-digest         ← config, db, embed, interests, rank, summarize
-telegram       ← config, db, ingest, digest
-```
-
-### Config structure
-
-**`config/config.yaml`:**
-```yaml
-digest:
-  size: 7
-  max_per_topic: 3
-  schedule: "08:00"
-  timezone: "Europe/Madrid"
-
-polling:
-  interval_hours: 2
-
-embedding:
-  model: "text-embedding-3-small"
-
-summarization:
-  model: "claude-sonnet-4-20250514"
-
-telegram:
-  chat_id: "..."
-```
-
-**`config/interests.yaml`:**
-```yaml
-topics:
-  technical_ml:
-    name: "Technical AI/ML"
-    description: |
-      Technical machine learning research, especially mechanistic
-      interpretability, training dynamics, ...
-  tech_strategy:
-    name: "Tech & Strategy"
-    description: |
-      ...
-```
-
-**Environment variables (`.env`):**
-```
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-TELEGRAM_BOT_TOKEN=...
-```
-
-### Scripts and deployment
-
-Each script in `scripts/` is a thin entry point that loads config, opens the DB, calls a library function, and exits. Scripts add the project root to `sys.path` so `import patronus` works without installation.
-
-**Daily digest script:**
-```bash
-python scripts/send_digest.py [--db PATH] [--terminal-only] [--no-penalty] [--force-notion-refresh]
-```
-- `--db`: Path to SQLite database (default: `db.sqlite3`)
-- `--terminal-only`: Print to terminal only, don't send to Telegram
-- `--no-penalty`: Ignore repeat penalty for already-digested items
-- `--force-notion-refresh`: Force refresh Notion context, bypassing cache
-
-**Crontab:**
-```
-0 */2 * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
-0 2  * * * cd /path/to/patronus && .venv/bin/python scripts/sync_notion_mirror.py
-0 8  * * * cd /path/to/patronus && .venv/bin/python scripts/send_digest.py
-```
-
-**Systemd (Telegram bot):**
-```ini
-[Service]
-WorkingDirectory=/path/to/patronus
-ExecStart=/path/to/patronus/.venv/bin/python scripts/run_bot.py
-Restart=on-failure
-```
-
-### Design decisions
-
-- **Embeddings for ranking, LLM for summaries only.** LLM-as-judge always finds a reason something is relevant. Embedding similarity measures geometric proximity to actual intellectual activity without confabulating.
-- **SQLModel over raw sqlite3.** The schema spec called for raw sqlite3, but SQLModel was chosen during implementation — it's thin enough (typed access over SQLite) and already done with tests.
-- **scripts/ + cron over APScheduler.** The scheduled jobs are independent and short-lived. Cron is transparent, debuggable, and doesn't require an extra dependency. The Telegram bot is the only long-running process.
-- **`interests.py` as the stage boundary.** This module is the seam between Stage 1 (static YAML descriptions) and Stage 2 (live Notion centroids). Everything downstream receives `dict[str, np.ndarray]` and doesn't care where it came from.
-- **Deliberately lossy.** The system does not try to ensure you see everything. It tries to ensure that what you see is worth your time.
-
-## Stage 2 architecture - being implemented
-
-Stage 2 replaces the deterministic rank-select-summarize pipeline with an LLM agent that acts as an editor. The agent receives personalization context (from Notion and/or static interests), plans a newspaper-style digest with typed sections, and uses retrieval tools to find items for each section. Output is decoupled from generation — the same digest can be sent to Telegram, printed to terminal, or published as an XML feed.
-
-### Module structure
+## Module structure
 
 ```
 patronus/
-├── __init__.py
-├── config.py               # Extended: models, notion, output settings
-├── db.py                   # Extended: new query methods for agent tools
-├── llm.py                  # NEW — provider-agnostic LLM completion + tool use
-├── embed.py                # Changed — provider routing (same interface)
-├── ingest.py               # Unchanged (RSS/Atom only)
-├── rank.py                 # Unchanged (backend for search_similar tool)
-├── summarize.py            # Unchanged (available for agent or Stage 1 fallback)
-├── context.py              # NEW — PersonalizationSource protocol + context merging
-├── interests.py            # Changed — implements PersonalizationSource
-├── notion.py               # NEW — implements PersonalizationSource (Notion API + mirror)
-├── notion_mirror.py        # NEW — local SQLite mirror of Notion pages with FTS5
-├── agent.py                # NEW — LLM editor: plan sections, call tools, assemble
-├── digest.py               # Changed — section-based Digest model, two pipeline paths
-├── pipeline.py             # NEW — top-level orchestrator
-├── bot.py                  # Renamed from telegram.py — bot command handlers only
-├── tools/                  # NEW — agent retrieval tools
-│   ├── __init__.py         # Tool protocol, ToolRegistry, get_tool_definitions()
+├── config.py               # Config dataclasses + YAML/env loading
+├── db.py                   # SQLite via SQLModel: Item, Feed, DigestRecord, ContextSnapshot
+├── llm.py                  # Provider-agnostic LLM client (Anthropic, OpenAI, Google)
+├── embed.py                # Embedding API wrapper
+├── ingest.py               # Feed polling, dedup, text extraction, embedding storage
+├── rank.py                 # Cosine similarity ranking + diversity selection (deterministic path)
+├── summarize.py            # Per-item LLM summaries (deterministic path)
+├── interests.py            # Static YAML interest vectors (PersonalizationSource + deterministic fallback)
+├── context.py              # PersonalizationSource protocol, Context dataclass, merge_sources()
+├── notion.py               # NotionSource: fetches, summarizes, and caches Notion context
+├── notion_mirror.py        # Local SQLite mirror of Notion pages with FTS5 full-text search
+├── digest.py               # Digest/DigestSection/DigestItem models; deterministic pipeline
+├── pipeline.py             # DigestPipeline orchestrator: sources → agent → outputs
+├── observability.py        # Langfuse tracing helpers
+├── agent/
+│   ├── _prompts.py         # All prompt strings and submit_digest tool schema
+│   ├── _inventory.py       # Step 0: build_inventory() — zero LLM cost
+│   ├── _steps.py           # Steps 2–3: identify_angles, filter_news, scout_research, pull_threads
+│   ├── _compose.py         # Step 4: compose_digest() → Digest via submit_digest tool
+│   └── run.py              # plan_and_assemble() orchestrator; Langfuse spans per step
+├── tools/
 │   ├── base.py             # Tool ABC, ToolResult dataclass
+│   ├── __init__.py         # ToolRegistry
 │   ├── local.py            # SearchSimilar, SearchRecent, SearchByTopic, SearchBySource
-│   └── arxiv.py            # SearchArxiv (ingests results into DB on retrieval)
-└── output/                 # NEW — pluggable delivery layer
+│   ├── arxiv.py            # SearchArxiv (ingests results into DB on retrieval)
+│   ├── openalex.py         # SearchOpenAlex, GetCitingPapers, GetReferencedPapers
+│   └── notion.py           # SearchNotion (queries the local mirror)
+└── output/
     ├── __init__.py         # Output protocol
-    ├── telegram.py         # Telegram formatting + delivery
-    ├── terminal.py         # Pretty-printed terminal output
-    └── feed.py             # XML/Atom feed generation
+    ├── telegram.py         # MarkdownV2 formatting + Telegram delivery
+    ├── terminal.py         # Pretty-printed stdout
+    └── feed.py             # XML/Atom feed
 
 scripts/
-├── poll_feeds.py           # Unchanged
-├── send_digest.py          # Uses pipeline.DigestPipeline
-├── seed_feeds.py           # Unchanged
-├── run_bot.py              # Runs bot.py
-├── sync_notion_mirror.py   # NEW — sync Notion DBs to local SQLite mirror
-└── test_notion_context.py          # Manual test: fetch Notion context and print
+├── poll_feeds.py           # Cron: poll all active feeds
+├── send_digest.py          # Cron: generate and deliver digest
+├── seed_feeds.py           # One-off: seed DB from a feeds file
+├── run_bot.py              # Systemd: Telegram bot (long-running)
+├── sync_notion_mirror.py   # Nightly: sync Notion DBs to local mirror
+└── test_notion_context.py  # Manual: fetch and print Notion context
 
 config/
-├── config.yaml             # Extended with models, notion, output sections
-└── interests.yaml          # Unchanged
+├── config.yaml
+└── interests.yaml          # Static interest descriptions (deterministic fallback)
 ```
 
-### What changed from Stage 1
+## Key abstractions
 
-| Module | Status | What changed |
-|--------|--------|--------------|
-| `config.py` | ✅ Changed | `NotionConfig`, `AgentConfig` dataclasses, `digest.mode` field, env vars |
-| `db.py` | ✅ Changed | `ContextSnapshot` table for caching personalization context |
-| `llm.py` | ✅ **New** | Provider-agnostic LLM client — `complete()` + `complete_with_tools()` with `ToolCall`/`LLMResponse` types |
-| `embed.py` | Changed | Provider routing via `llm.py` (same `embed_text`/`embed_batch` interface) |
-| `ingest.py` | Unchanged | RSS/Atom polling, content extraction, manual URL add |
-| `rank.py` | Unchanged | Cosine similarity + selection (used by `tools/local.py` as backend) |
-| `summarize.py` | Unchanged | Per-item summaries (used by Stage 1 fallback path) |
-| `context.py` | ✅ **New** | `PersonalizationSource` protocol, `Context` dataclass, `merge_sources()` |
-| `interests.py` | ✅ Changed | `InterestsSource` class implements `PersonalizationSource`; `load_interest_vectors()` preserved |
-| `notion.py` | ✅ **New** | `NotionSource` implements `PersonalizationSource` — pulls from Notion DBs via API or local mirror, summarizes via LLM, caches to DB. Module-level fetch helpers (`fetch_notion_entries`, `query_notion_database`, `extract_page_content`, `resolve_data_source_id`) shared with sync script |
-| `notion_mirror.py` | ✅ **New** | Local SQLite mirror of Notion pages. `NotionMirror` class: `pages` table (id, title, content, source_db, url, created/edited timestamps, optional embedding blob) + FTS5 virtual table for BM25 full-text search + `sync_meta` table for per-DB incremental sync tracking. Exposes `search(query, limit, source_dbs)` and `get_recent(source_dbs, since, limit)`. |
-| `agent.py` | ✅ **New** | LLM editor agent: receives context, calls tools via `submit_digest`, returns structured `Digest` |
-| `digest.py` | ✅ Changed | `SectionType` enum, `DigestSection` model; `generate_digest` dispatches to agent or Stage 1 path |
-| `pipeline.py` | ✅ **New** | `DigestPipeline` orchestrator — wires sources, tools, agent, and outputs |
-| `bot.py` | ✅ Renamed | Was `telegram.py` — bot command handlers, uses pipeline for digest generation |
-| `tools/` | ✅ **New** | `ToolRegistry`, `Tool` ABC, local retrieval tools, Arxiv skeleton |
-| `output/` | ✅ **New** | `Output` protocol, `TelegramOutput`, `TerminalOutput`, feed skeleton |
+Three protocols are the only extension points. Everything else is concrete.
 
-### Key abstractions
+**`PersonalizationSource`** (`context.py`) — produces a prose context string for the agent. `InterestsSource` loads static YAML descriptions; `NotionSource` fetches live Notion content. `merge_sources()` concatenates prose from all available sources, skipping any that fail.
 
-Three protocols define the extension points. The pipeline orchestrator depends on these interfaces, not on concrete implementations.
+**`Tool`** (`tools/base.py`) — a retrieval action the agent can call. Each tool has a name, description, input schema, and `execute()` method. `ToolRegistry` produces the tool definitions list for the LLM API. Adding a tool = adding a file.
 
-**`PersonalizationSource`** (defined in `context.py`) — anything that provides context about current intellectual activity. Each source produces a prose context string for the agent and optionally a set of interest vectors for retrieval tools.
+**`Output`** (`output/__init__.py`) — delivers a formatted digest. The pipeline dispatches to all configured outputs; each owns its own formatting.
 
-```python
-class PersonalizationSource(Protocol):
-    def get_context(self, config: Config) -> str: ...
-    def get_interest_vectors(self, config: Config) -> dict[str, np.ndarray] | None: ...
-```
+## Config
 
-Implementations: `interests.py` (static YAML descriptions → both context and vectors), `notion.py` (live Notion content → context string, vectors optional). The pipeline merges all sources: contexts are concatenated, vector dicts are merged. If a source is unavailable (e.g. Notion API down), the pipeline degrades gracefully — fewer sources, not a failure.
-
-**`Output`** (defined in `output/__init__.py`) — anything that can deliver a formatted digest. Each output owns its formatting — Telegram deals with MarkdownV2 escaping and message splitting, terminal deals with width, feed deals with XML.
-
-```python
-class Output(Protocol):
-    def send(self, digest: Digest, config: Config) -> None: ...
-```
-
-Implementations: `output/telegram.py`, `output/terminal.py`, `output/feed.py`. The pipeline dispatches to all configured outputs.
-
-**`Tool`** (defined in `tools/base.py`) — a retrieval action the agent can invoke. Each tool has a name, description, and parameter schema (for the LLM tool use API) plus an `execute` method.
-
-```python
-class Tool(ABC):
-    name: str
-    description: str
-    input_schema: dict
-
-    @abstractmethod
-    def execute(self, **params) -> ToolResult: ...
-```
-
-`ToolRegistry` collects all tools and produces the tool definitions list for the LLM API. The agent never imports tools directly — it goes through the registry. Adding a tool means adding a file and registering it.
-
-### Module responsibilities (new and changed modules)
-
-**`llm.py`** ✅ — Provider-agnostic LLM client. Exposes `complete(model, *, system, user_message, max_tokens)` for simple completions and `complete_with_tools(model, *, system, messages, tools, max_tokens)` for tool-use workflows. Both accept `"provider/model-name"` strings (e.g. `"anthropic/claude-sonnet-4-20250514"`, `"openai/gpt-4o-mini"`). Tool use returns a common `LLMResponse` dataclass containing `text`, `tool_calls: list[ToolCall]`, and `stop_reason`. Helper functions `build_tool_result_message()` and `build_assistant_message_from_response()` construct the message dicts for multi-turn tool-use conversations. Anthropic and OpenAI tool use are implemented; Google can be added when needed. Uses lazy singleton clients per provider.
-
-**`context.py`** ✅ — Defines the `PersonalizationSource` protocol (`get_context()`, `get_interest_vectors()`) and a `Context` dataclass (prose summary + optional interest vectors). `merge_sources(sources, config)` concatenates context strings and merges vector dicts from all available sources, gracefully skipping any source that throws.
-
-**`interests.py`** ✅ (changed) — `InterestsSource` class implements `PersonalizationSource`. `get_context()` returns topic descriptions as prose. `get_interest_vectors()` returns the embedded vectors via the existing `load_interest_vectors()` function, which is preserved for backward compatibility.
-
-**`notion.py`** ✅ — `NotionSource` class implements `PersonalizationSource`. When `notion.mirror_path` is configured and the mirror file exists, reads pages from the local mirror via `get_recent()` (with staleness warning if mirror is >24h old). Falls back to live Notion API if no mirror is configured. In both paths: applies lookback + fallback_lookback window, sends content to an LLM summarizer, and caches the resulting summary to `ContextSnapshot` with a configurable TTL. Module-level helpers (`fetch_notion_entries`, `query_notion_database`, `extract_page_content`, `resolve_data_source_id`) are used by both `NotionSource` and `scripts/sync_notion_mirror.py`.
-
-**`notion_mirror.py`** ✅ **New** — `NotionMirror` class: local SQLite mirror with a `pages` table (id, title, content, source_db, url, created/edited timestamps, optional embedding blob), an FTS5 virtual table (`pages_fts`) over title+content for BM25 full-text search, and a `sync_meta` table for per-DB incremental sync tracking. `search(query, limit, source_dbs)` returns BM25-ranked results; `get_recent(source_dbs, since, limit)` returns pages ordered by `last_edited_at`. Both return `list[MirrorPage]` with a `content_snippet` field (first 300 chars of content). `is_stale(max_age_hours)` checks the most recent `last_synced_at` across all DBs. `open_mirror(path)` creates parent directories as needed.
-
-**`agent.py`** ✅ — The LLM editor agent. `plan_and_assemble(config, context, tool_registry)` runs the agent loop: sends the personalization context and an editorial system prompt, lets the agent call retrieval tools via `llm.complete_with_tools()`, and collects structured output via a `submit_digest` tool that the agent calls to deliver the final `Digest` with typed sections. The agent decides which sections to include, how many items each gets, and writes summaries as part of assembly. The loop is capped at `max_iterations` (configurable) to prevent runaway API calls.
-
-**`digest.py`** ✅ (changed) — The `Digest` data model gains sections via `SectionType` enum and `DigestSection` dataclass. `DigestItem` is extended with explicit `item_id`, `title`, `url`, `source`, `author` fields for agent-produced items (Stage 1 items still use `scored_item`). `generate_digest()` checks `config.digest.mode` and dispatches to `generate_digest_deterministic()` (Stage 1) or the `DigestPipeline` (Stage 2). Formatting logic moves out to the output layer.
-
-**`pipeline.py`** ✅ — The top-level orchestrator. `DigestPipeline` is initialized with a config, DB, list of `PersonalizationSource`s, and list of `Output`s. `run()` merges context from all sources, generates a digest (agent or deterministic), saves to DB, and dispatches to all outputs. Falls back to deterministic if agent produces an empty digest or no personalization context is available. Scripts and the bot instantiate a pipeline and call `run()`.
-
-**`bot.py`** (renamed from `telegram.py`) — Telegram bot command handlers (`/add`, `/digest`, `/status`). The `/digest` command instantiates a pipeline and calls `run()`. Message delivery is handled by `output/telegram.py`.
-
-**`tools/local.py`** — Four retrieval tools backed by the local DB: `SearchSimilar` (embed query → cosine similarity via `rank.py`), `SearchRecent` (items from last N days), `SearchByTopic` (items matching a topic cluster using interest vectors), `SearchBySource` (filter by feed/source type). All return item metadata the agent uses for editorial decisions.
-
-**`tools/arxiv.py`** — `SearchArxiv` tool. Queries the Arxiv API, returns results to the agent, and ingests them into the DB (with source tagging) so they're available for future retrieval. Additional external tools (OpenAlex, citation search) follow the same pattern — one file per API.
-
-**`output/telegram.py`** — Implements `Output`. Formats a `Digest` with typed sections into MarkdownV2 messages (respecting Telegram's 4096-char limit and per-section formatting), sends via the Telegram API.
-
-**`output/terminal.py`** — Implements `Output`. Pretty-prints a digest to stdout.
-
-**`output/feed.py`** — Implements `Output`. Serializes a digest as an XML/Atom feed.
-
-### Data flow
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                         INGESTION (unchanged)                 │
-│                                                               │
-│  Cron (every 2h): scripts/poll_feeds.py                       │
-│    ingest.poll_feeds() → feedparser → trafilatura → embed     │
-│    │                                                          │
-│    ▼                                                          │
-│  SQLite (items with embeddings)                               │
-└──────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│                    DIGEST GENERATION (daily)                   │
-│                                                               │
-│  scripts/send_digest.py → pipeline.DigestPipeline.run()       │
-│                                                               │
-│  1. PERSONALIZATION                                           │
-│     context.merge_sources([interests, notion])                │
-│     ├── interests.get_context()    → topic descriptions       │
-│     ├── interests.get_interest_vectors() → embeddings         │
-│     └── notion.get_context()       → recent activity summary  │
-│     Result: Context(prose, vectors)                           │
-│                                                               │
-│  2. AGENT PLANNING + RETRIEVAL                                │
-│     agent.plan_and_assemble(context, tool_registry)           │
-│     │                                                         │
-│     │  Agent calls tools via LLM tool use:                    │
-│     │  ├── SearchSimilar   → embed + cosine (rank.py)         │
-│     │  ├── SearchRecent    → DB query                         │
-│     │  ├── SearchByTopic   → DB + interest vectors            │
-│     │  ├── SearchBySource  → DB query                         │
-│     │  └── SearchArxiv     → Arxiv API (+ ingest into DB)     │
-│     │                                                         │
-│     │  Agent decides sections, selects items, writes summaries│
-│     ▼                                                         │
-│     Digest(sections=[DigestSection(...), ...])                │
-│                                                               │
-│  3. DELIVERY                                                  │
-│     for output in outputs:                                    │
-│         output.send(digest)                                   │
-│     ├── output/telegram.py  → Telegram message                │
-│     ├── output/terminal.py  → stdout                          │
-│     └── output/feed.py      → XML/Atom file                  │
-└──────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│                    BOT (long-running)                          │
-│                                                               │
-│  scripts/run_bot.py → bot.run_bot()                           │
-│    /add <url> → ingest.ingest_url()                           │
-│    /digest    → pipeline.DigestPipeline.run()                 │
-│    /status    → db queries                                    │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Dependency graph
-
-No cycles. New modules in **bold**.
-
-```
-config           ← (no internal deps)
-db               ← (no internal deps)
-llm              ← config
-embed            ← config, llm
-rank             ← config, db
-interests        ← config, embed, context
-notion_mirror    ← (no internal deps — pure sqlite3)
-notion           ← config, llm, context, notion_mirror
-summarize        ← config, llm
-context          ← (no internal deps — defines protocol + dataclass)
-tools/*          ← config, db, embed, rank
-agent            ← config, llm, tools
-digest           ← config, db, interests, rank, summarize, agent
-pipeline         ← config, db, context, digest, agent, tools, output
-bot              ← config, db, ingest, pipeline
-output/*         ← config, digest
-ingest           ← config, db, embed
-```
-
-### Config structure
-
-**`config/config.yaml`** (Stage 2 additions):
 ```yaml
 digest:
-  size: 10
-  max_per_topic: 3
+  mode: "agent"           # "agent" or "deterministic"
+  size: 10                # used by deterministic path
   schedule: "08:00"
   timezone: "Europe/Madrid"
-  mode: "agent"                   # "agent" (Stage 2) or "deterministic" (Stage 1)
-
-polling:
-  interval_hours: 2
-
-embedding:
-  model: "text-embedding-3-small"
-
-summarization:
-  model: "claude-haiku-4-5-20251001"
 
 agent:
-  model: "anthropic/claude-sonnet-4-20250514"
-  max_iterations: 10
-  max_tokens: 4096
+  model: "..."                  # default for all steps
+  angles_model: "..."           # override per step
+  news_model: "..."
+  research_model: "..."
+  threads_model: "..."
+  compose_model: "..."
+  notion_context_model: "..."
+  digest_summary_model: "..."   # deterministic path only
+  inventory_lookback_days: 2
+  max_tokens: 5000
 
 notion:
   database_ids:
@@ -430,56 +115,93 @@ notion:
     work_diary: "..."
     library: "..."
   lookback_days: 14
-  fallback_lookback_days: 30
-  min_entries_threshold: 3
-  max_chars_per_entry: 3000
-  summary_model: "google/gemini-2.5-flash-lite"
   cache_ttl_hours: 24
-  mirror_path: "notion_mirror.sqlite3"   # path to local mirror DB; empty = API only
+  mirror_path: "notion_mirror.sqlite3"   # empty = live API only
 
-outputs:
-  - type: telegram
-    chat_id: "..."
-  - type: terminal
-  - type: feed
-    path: "output/digest.xml"
+embedding:
+  model: "..."
+
+telegram:
+  chat_id: "..."
 ```
 
-**Environment variables (`.env`):**
 ```
+# .env
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=...
 TELEGRAM_BOT_TOKEN=...
 NOTION_TOKEN=secret_...
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
 ```
 
-### Design decisions
+## Deployment
 
-- **LLM as editor, not search engine.** The agent decides what the digest should look like and uses retrieval tools to find items. It never sees all items at once. This contains confabulation risk to the editorial layer while getting the flexibility of agentic planning.
-- **Newspaper sections, not a ranked list.** Different content types deserve different treatment. Papers get one-line roundups. Long-form gets full summaries. News gets headlines. The agent decides section structure based on what's available and what's relevant.
-- **Three extension points, not a framework.** `PersonalizationSource`, `Output`, and `Tool` are the only abstractions. Everything else is concrete. This avoids over-engineering while making the system pluggable where it matters — adding a new context source, output format, or retrieval tool doesn't require touching the pipeline.
-- **Provider-agnostic model config.** `llm.py` routes `"provider/model"` strings so any part of the pipeline can use any provider's model. Switching the summarizer from Claude to GPT-4o-mini is a one-line config change, not a code change.
-- **Stage 1 as fallback.** The deterministic pipeline is preserved. `digest.mode: "deterministic"` in config bypasses the agent entirely and runs the original rank → select → summarize path. Useful for comparison and as a safety net.
-- **`telegram.py` splits into `bot.py` + `output/telegram.py`.** Bot commands are an input interface (control plane). Digest delivery is an output concern. Separating them lets the pipeline dispatch to Telegram without importing bot machinery.
-- **Tools as a package.** Each external API (Arxiv, later OpenAlex, citations) has different auth, parsing, and error handling. One file per API, a shared base class, and a registry that produces tool definitions for the LLM API. Adding a tool = adding a file.
-- **Notion as optional.** If Notion is unavailable, the pipeline degrades to static interests — fewer personalization sources, not a failure. The `PersonalizationSource` protocol makes this natural: the pipeline merges whatever sources are available.
-- **Provider-agnostic tool use, not a framework.** `llm.py` exposes a common `complete_with_tools()` interface with `ToolCall` and `LLMResponse` types. The agent works with these abstractions — swapping the agent model from Claude to Gemini or GPT is a config change. LangChain/LangGraph would add abstraction without value for a single-purpose agent with a fixed set of tools.
-- **Notion context caching.** Fetching and summarizing Notion content is expensive (multiple API calls + LLM summarization). The system caches Notion context summaries in the DB with a configurable TTL (default 24 hours via `cache_ttl_hours`). By default, the digest uses cached context if available and fresh. The cache can be bypassed with `--force-notion-refresh` flag in `scripts/send_digest.py`. On LLM failure, the system falls back to stale cache if available rather than failing completely. This improves reliability and reduces API costs during development and testing.
-- **Local Notion mirror for context and search.** `notion_mirror.py` maintains a local SQLite copy of all Notion pages with an FTS5 index for BM25 full-text search. When `notion.mirror_path` is set, `NotionSource` reads from the mirror instead of the live API — eliminating Notion API calls from the digest hot path. The mirror is synced nightly via `scripts/sync_notion_mirror.py` (incremental by default, `--full` for complete resync). Embeddings are opt-in at sync time (`--embed` flag). If the mirror is stale (>24h), a warning is logged but the stale mirror is still used; the summary cache sits on top as before, so a fresh summary can still be served within the TTL even if the mirror pages are slightly dated.
+```
+# crontab
+0 */2 * * * cd /path/to/patronus && .venv/bin/python scripts/poll_feeds.py
+0 2  * * * cd /path/to/patronus && .venv/bin/python scripts/sync_notion_mirror.py
+0 8  * * * cd /path/to/patronus && .venv/bin/python scripts/send_digest.py
+```
+
+```ini
+# systemd (Telegram bot)
+[Service]
+WorkingDirectory=/path/to/patronus
+ExecStart=/path/to/patronus/.venv/bin/python scripts/run_bot.py
+Restart=on-failure
+```
+
+```bash
+# send_digest.py flags
+--terminal-only          # print to stdout only, skip Telegram
+--no-penalty             # ignore repeat penalty for previously digested items
+--force-notion-refresh   # bypass Notion context cache
+--feed                   # publish to RSS feed on R2
+--reader                 # send to Readwise Reader
+```
+
+## Dependency graph
+
+No cycles.
+
+```
+config           ← (no internal deps)
+db               ← (no internal deps)
+context          ← (no internal deps)
+notion_mirror    ← (no internal deps)
+llm              ← config
+embed            ← config, llm
+rank             ← config, db
+ingest           ← config, db, embed
+interests        ← config, embed, context
+summarize        ← config, llm
+notion           ← config, llm, context, notion_mirror
+tools/*          ← config, db, embed, rank
+agent/*          ← config, llm, tools, digest
+digest           ← config, db, interests, rank, summarize
+pipeline         ← config, db, context, digest, agent, tools, output
+output/*         ← config, digest
+bot              ← config, db, ingest, pipeline
+```
+
+## Design decisions
+
+- **Full visibility before editorial judgment.** The inventory gives the agent all items since the last digest before any LLM call. Nothing is invisible because the agent didn't think to search for it.
+- **Separation of retrieval and editorial work.** Cheap/deterministic steps (inventory, news filter, angles) run first. More capable models are reserved for the steps that genuinely need judgment (research scout, thread puller, compose).
+- **Peripheral interests get structural support.** The angles step explicitly extracts dormant curiosities from the reader context and turns them into editorial hypotheses. The thread puller is the only truly exploratory step and follows those hooks.
+- **Interest vectors only in the deterministic fallback.** The agent path uses prose context and tool-based retrieval. Embeddings are computed at ingest time and used by local search tools, not by the agent directly.
+- **Provider-agnostic model config.** `llm.py` routes `"provider/model"` strings. Each digest step has its own model config key; all fall back to `agent.model`. Switching the model for any step is a one-line config change.
+- **Notion context is cached.** Fetching and summarizing Notion is expensive. Results are cached in the DB with a 24h TTL. On LLM failure the system falls back to stale cache rather than failing completely. `--force-notion-refresh` bypasses the cache.
+- **Local Notion mirror eliminates API calls from the hot path.** `notion_mirror.py` maintains a SQLite copy with an FTS5 index. `NotionSource` reads from it instead of the live API; the mirror is synced nightly by `sync_notion_mirror.py`.
+- **Three extension points, not a framework.** `PersonalizationSource`, `Tool`, and `Output` are the only abstractions. Adding a new context source, retrieval tool, or delivery channel doesn't require touching the pipeline.
+- **Deterministic fallback preserved.** `digest.mode: "deterministic"` runs the original rank → select → summarize path. Also used automatically if Notion context is unavailable or the agent produces an empty digest.
 
 ## Development
 
-### Setup
 ```bash
 uv sync
 source .venv/bin/activate
-```
-
-### Tests
-```bash
 pytest
 ```
-
-### Legacy code
-The `old/` folder contains Patronus v1 — a many-to-many RSS filter that classified articles into topic buckets and published curated feeds to GCS. That approach was replaced by the embedding-based system described above.
