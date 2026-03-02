@@ -26,6 +26,23 @@ def _escape_url(url: str) -> str:
     return url.replace("\\", "\\\\").replace(")", "\\)")
 
 
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def _escape_with_links(text: str) -> str:
+    """Escape text for MarkdownV2 while preserving [label](url) inline links."""
+    result: list[str] = []
+    last = 0
+    for m in _MARKDOWN_LINK_RE.finditer(text):
+        result.append(_escape_markdown_v2(text[last:m.start()]))
+        label = _escape_markdown_v2(m.group(1))
+        url = _escape_url(m.group(2))
+        result.append(f"[{label}]({url})")
+        last = m.end()
+    result.append(_escape_markdown_v2(text[last:]))
+    return "".join(result)
+
+
 def _format_item_line(item: DigestItem) -> str:
     title = _clean_html(item.title or "Untitled")
     url = item.url
@@ -41,7 +58,7 @@ def _format_item_line(item: DigestItem) -> str:
     if meta_parts:
         line += " — " + ", ".join(meta_parts)
     if item.summary:
-        line += f"\n{_escape_markdown_v2(item.summary)}"
+        line += f"\n{_escape_with_links(item.summary)}"
     return line
 
 
@@ -79,7 +96,7 @@ def _format_topic_section_deterministic(topic_name: str, items: list[DigestItem]
         if source:
             line += f" — _{_escape_markdown_v2(source)}_"
         if di.summary:
-            line += f"\n{_escape_markdown_v2(di.summary)}"
+            line += f"\n{_escape_with_links(di.summary)}"
         lines.append(line)
     return "\n\n".join(lines)
 

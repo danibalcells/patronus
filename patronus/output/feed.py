@@ -90,6 +90,23 @@ def _esc(text: str) -> str:
     return html.escape(text, quote=True)
 
 
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def _summary_to_html(text: str) -> str:
+    """Escape text for HTML while converting [label](url) markdown links to <a> tags."""
+    result: list[str] = []
+    last = 0
+    for m in _MARKDOWN_LINK_RE.finditer(text):
+        result.append(_esc(text[last:m.start()]))
+        label = _esc(m.group(1))
+        url = _esc(m.group(2))
+        result.append(f'<a href="{url}">{label}</a>')
+        last = m.end()
+    result.append(_esc(text[last:]))
+    return "".join(result)
+
+
 def _format_item_html(item: DigestItem) -> str:
     parts: list[str] = []
     title = _esc(item.title or "Untitled")
@@ -109,7 +126,7 @@ def _format_item_html(item: DigestItem) -> str:
         parts.append(f"<p><small>{_MIDDOT.join(meta)}</small></p>")
 
     if item.summary:
-        parts.append(f"<p>{_esc(item.summary)}</p>")
+        parts.append(f"<p>{_summary_to_html(item.summary)}</p>")
 
     return "\n".join(parts)
 

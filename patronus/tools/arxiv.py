@@ -76,10 +76,13 @@ class SearchArxiv(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search the Arxiv API for academic papers matching a query. "
-            "Returns paper titles, authors, abstracts, and links. "
-            "Supports sorting by relevance or recency, filtering by category (e.g. cs.LG, cs.AI, stat.ML) "
-            "and restricting to papers submitted within the last N days. "
+            "Search the Arxiv API for academic papers. "
+            "IMPORTANT: Arxiv uses strict boolean keyword matching, NOT semantic search. "
+            "Every word in a multi-word query must appear in the paper, so long natural-language "
+            "phrases will return zero results. Use short, specific queries of 2-4 keywords — "
+            "e.g. 'belief geometry LLM', 'activation steering safety', 'sparse autoencoder "
+            "interpretability', 'model diffing emergent misalignment'. "
+            "Supports filtering by category (e.g. cs.LG, cs.AI, cs.CL) and recency. "
             "Note: Arxiv does not expose citation counts or download statistics."
         )
 
@@ -90,7 +93,11 @@ class SearchArxiv(Tool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query for Arxiv papers.",
+                    "description": (
+                        "Short keyword query, 2-4 terms. Every term must appear in the paper. "
+                        "Good: 'belief geometry LLM', 'residual stream probing'. "
+                        "Bad: 'context-dependent belief representation language models activation space'."
+                    ),
                 },
                 "n": {
                     "type": "integer",

@@ -57,45 +57,43 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging()
-    config = load_config()
 
-    with Database(db_path=args.db) as db:
-        tool = SearchArxiv(config, db, embed=args.embed)
+    tool = SearchArxiv()
 
-        print(f"Query:    {args.query!r}")
-        print(f"Results:  up to {args.n}")
-        print(f"Sort:     {args.sort}")
-        if args.category:
-            print(f"Category: {args.category}")
-        if args.days:
-            print(f"Days:     last {args.days}")
-        print(f"Embed:    {args.embed}")
-        print()
+    print(f"Query:    {args.query!r}")
+    print(f"Results:  up to {args.n}")
+    print(f"Sort:     {args.sort}")
+    if args.category:
+        print(f"Category: {args.category}")
+    if args.days:
+        print(f"Days:     last {args.days}")
+    print(f"Embed:    {args.embed}")
+    print()
 
-        result = tool.execute(
-            query=args.query,
-            n=args.n,
-            sort_by=args.sort,
-            category=args.category or None,
-            days=args.days,
-        )
+    result = tool.execute(
+        query=args.query,
+        n=args.n,
+        sort_by=args.sort,
+        category=args.category or None,
+        days=args.days,
+    )
 
-        if not result.items:
-            print(result.message)
-            return
-
+    if not result.items:
         print(result.message)
-        print("=" * 80)
-        for i, item in enumerate(result.items, 1):
-            print(f"\n[{i}] {item['title']}")
-            print(f"    Authors:    {item['author'] or '—'}")
-            print(f"    URL:        {item['url']}")
-            print(f"    Published:  {item['timestamp'] or '—'}")
-            if item.get("categories"):
-                print(f"    Categories: {', '.join(item['categories'])}")
-            snippet = item["snippet"]
-            print(f"    Abstract:   {snippet[:300]}{'…' if len(snippet) > 300 else ''}")
-        print("\n" + "=" * 80)
+        return
+
+    print(result.message)
+    print("=" * 80)
+    for i, item in enumerate(result.items, 1):
+        print(f"\n[{i}] {item['title']}")
+        print(f"    Authors:    {item['author'] or '—'}")
+        print(f"    URL:        {item['url']}")
+        print(f"    Published:  {item['timestamp'] or '—'}")
+        if item.get("categories"):
+            print(f"    Categories: {', '.join(item['categories'])}")
+        snippet = item["snippet"]
+        print(f"    Abstract:   {snippet[:300]}{'…' if len(snippet) > 300 else ''}")
+    print("\n" + "=" * 80)
 
 
 if __name__ == "__main__":

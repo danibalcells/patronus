@@ -22,13 +22,27 @@ letter are distinct from the news itself."
 - "Two new papers connect to the reader's belief geometry work: one on orthogonal subspaces \
 (from the reader's own team) and one on Bayesian updating in transformers."
 - "The reader highlighted passages from a neuroscience book last week. There's a new paper on \
-predictive processing in neural networks that connects to this."
-- "Nothing in the feed today about [peripheral interest X], but there might be older content \
-worth surfacing."
+predictive processing in neural networks that directly addresses predictive processing in \
+artificial neural networks."
 
-Produce 10-15 angles. For each angle also flag:
+Produce 5-10 angles. Quality over quantity — only propose angles with genuine editorial substance.
+
+Judgment rules:
+- An angle requires real evidence in today's inventory: at least 2-3 items supporting it, or one \
+item that is directly and substantially relevant to the reader's active work (e.g. a new paper \
+in their exact subfield, not merely the same broad field).
+- Do NOT manufacture connections between unrelated domains. If the reader has interests in AI \
+policy AND geopolitics, that does not make every geopolitics story relevant to AI policy. There \
+must be a direct, substantive causal or conceptual link — not just "both are in the reader's \
+interest list."
+- Do NOT invent angles about topics where today's inventory has no new content. If nothing new \
+appeared on a topic, skip it.
+- Ask yourself: would the reader naturally see this connection upon reading the items, or am I \
+constructing it post-hoc?
+
+For each angle also flag:
 - HIGH_SATURATION topics (many items about the same story that need consolidation)
-- PERIPHERAL_HOOK connections (dormant curiosities linked to today's content)
+- PERIPHERAL_HOOK connections (dormant curiosities with genuine hooks in today's content)
 - PREVIOUSLY_FEATURED warnings (items seen in recent digests — only include if genuinely new angle)
 
 Weight your angles by the reader's priority tiers. The reader context uses PRIMARY / SECONDARY / \
@@ -67,24 +81,32 @@ find papers directly relevant to the reader's active research threads and curate
 section of the digest.
 
 Your output is a curated list of papers with:
-- One-line summary per paper
+- One-line summary describing what the paper does (factual, not speculative)
 - NEW or RELEVANT flag (NEW = recently published; RELEVANT = older but directly applicable)
 - Notion connection note if you found one via search_notion (optional)
 
 Rules:
 - Do NOT start from the inventory. The research section comes entirely from your tool calls.
 - Read the reader context carefully and identify 2-3 precise research threads the reader is \
-  currently pursuing (e.g., "belief geometry and context-induced shifts in LLM residual streams", \
-  "adversarial robustness evaluation design for frontier models"). Search specifically for papers \
-  about those subfields.
-- Strictly primary research only: papers must be directly relevant to the reader's specific lines \
-  of work — not peripherally connected, not about the broad field in general.
+currently pursuing (e.g., "belief geometry and context-induced shifts in LLM residual streams", \
+"adversarial robustness evaluation design for frontier models"). Search specifically for papers \
+about those subfields.
+- Strict relevance bar: papers must be directly relevant to the reader's specific lines of work — \
+not peripherally connected, not about the broad field in general. A paper about "truth in LLMs" \
+is not automatically relevant to "belief geometry" unless it addresses representational geometry, \
+probing methods, or activation-space structure specifically. A paper about training data economics \
+is not relevant to mechanistic interpretability.
+- Write summaries that describe what the paper does, not speculative connections to the reader's \
+projects. The reader will see genuine connections themselves. \
+Bad: "framework for testing whether your 3D PCA shifts are domain-specific." \
+Good: "Tests whether truthfulness is encoded in domain-general or domain-specific linear \
+directions across five truth types using probing classifiers."
 - Every paper in your output must come from a tool call (search_arxiv, search_openalex, \
-  search_notion). Do not include papers you haven't found via tools.
+search_notion). Do not include papers you haven't found via tools.
 - Each iteration: issue 3-5 parallel tool calls, review results, then either submit or do one \
-  more targeted round
+more targeted round
 - Cap at 2 iterations total
-- Aim for 4-10 papers\
+- Aim for 4-10 papers. Fewer genuinely relevant papers beats padding with tangential work.\
 """
 
 THREADS_SYSTEM_PROMPT = """\
@@ -105,15 +127,18 @@ as valuable.
 
 Rules:
 - Use the angles document as your starting point — it identifies peripheral hooks and thematic \
-  connections to follow
+connections to follow
 - At least half your proposals should connect to the reader's PRIMARY or SECONDARY areas \
-  (as labeled in the angles and reader context). Serendipitous/PERIPHERAL connections are welcome \
-  but should be clearly labeled [PERIPHERAL] and limited to 1-3 proposals.
+(as labeled in the angles and reader context). Serendipitous/PERIPHERAL connections are welcome \
+but should be clearly labeled [PERIPHERAL] and limited to 1-3 proposals.
 - Receive the news and research outputs to avoid duplicating their selections
 - Issue 3-5 parallel tool calls per iteration; up to 3 iterations
 - Each iteration: follow the most promising thread from the angles or from previous results
 - Output: 3-8 connection proposals, each with the item metadata and a note on why it's \
-  relevant right now
+relevant right now
+- Apply genuine judgment about relevance. Ask: would this item actually change how the reader \
+thinks about their work, or am I forcing a connection because the reader has related interests? \
+Two things being in the same broad field is not enough — the connection must be substantive.
 
 Output format:
 For each proposal:
@@ -136,7 +161,9 @@ Rules:
 - Group tweets by conversation topic or theme. If multiple tweets discuss the same subject, \
   consolidate them into one cluster.
 - For each cluster, write 2-3 sentences summarizing what people are saying: the main point, \
-  the most interesting takes, and who is saying what (name accounts when relevant).
+  the most interesting takes, and who is saying what. When attributing a specific take to a \
+  specific account, link the account handle inline using markdown: [text](tweet_url). Use the \
+  URLs from the tweet inventory.
 - Surface genuine discussions and debates, not just announcements.
 - Produce 3-8 clusters. If the tweet inventory is thin, produce fewer.
 - Order clusters by interest level to the reader (use the reader context for relevance weighting).
@@ -144,7 +171,7 @@ Rules:
 Output format:
 For each cluster:
 TOPIC: <short topic label>
-SUMMARY: <2-3 sentence summary of the discussion>
+SUMMARY: <2-3 sentence summary using inline markdown links, e.g. "[@handle](url) argues that...">
 ITEM_IDS: <comma-separated IDs of tweets in this cluster>
 \
 """
@@ -168,7 +195,9 @@ content):
    4-15 items. Do not place tweets or social discussions here — those go in chatter.
 3. **chatter**: Summary of Twitter/social conversations, placed immediately after what's new. \
    Grouped by topic, not by individual tweet. 2-3 sentences per cluster. 3-8 items. These come \
-   from the chatter summary input — do not place articles here.
+   from the chatter summary input — do not place articles here. For chatter items: set title to \
+   the cluster topic, omit the source field, and preserve inline markdown links from the chatter \
+   summary (e.g. "[@handle](url) argues that...") to attribute specific takes to specific accounts.
 4. **research_roundup**: Papers directly relevant to the reader's active research threads. One \
    line per paper. Always include published_date. 4-10 items.
 5. **threads**: Content worth spending time on that connects to the reader's work or interests. \
@@ -187,6 +216,11 @@ content):
 - Weave cross-references between sections where helpful ("see also Research")
 - A tight digest beats a padded one — skip any section without strong content
 - Recency: items in whats_new must be recent (within 7 days)
+- Do not manufacture connections in summaries. Describe what the content says and why it matters \
+to the reader; do not speculatively link items to the reader's specific projects unless the \
+connection is direct and obvious. The reader will see genuine connections themselves.
+- Summaries may use inline markdown links [text](url) to attribute voices or link supporting \
+sources within the prose — use this especially for chatter items that synthesize multiple tweets.
 - Output via the submit_digest tool — do NOT write the digest as plain text
 
 IMPORTANT: Call submit_digest exactly once with the complete final digest.\
@@ -241,7 +275,11 @@ SUBMIT_DIGEST_TOOL: dict[str, Any] = {
                                     "author": {"type": "string"},
                                     "summary": {
                                         "type": "string",
-                                        "description": "Editorial summary appropriate to the section type.",
+                                        "description": (
+                                            "Editorial summary appropriate to the section type. "
+                                            "May contain inline markdown links [text](url) to "
+                                            "attribute voices or link supporting sources within prose."
+                                        ),
                                     },
                                     "published_date": {
                                         "type": "string",
