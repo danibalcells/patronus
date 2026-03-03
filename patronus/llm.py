@@ -90,6 +90,24 @@ def complete_structured(
         raise ValueError(f"Provider '{provider}' does not support structured output yet.")
 
 
+_CONTEXT_LIMITS: dict[str, int] = {
+    "anthropic": 200_000,
+    "google": 1_000_000,
+    "openai": 128_000,
+}
+
+_CHARS_PER_TOKEN = 2.5
+
+
+def estimate_tokens(text: str) -> int:
+    return int(len(text) / _CHARS_PER_TOKEN)
+
+
+def get_context_limit(model: str) -> int:
+    provider = model.split("/", 1)[0]
+    return _CONTEXT_LIMITS.get(provider, 128_000)
+
+
 def build_tool_result_message(tool_calls: list[ToolCall], results: dict[str, str]) -> dict[str, Any]:
     content = []
     for tc in tool_calls:

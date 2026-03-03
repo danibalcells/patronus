@@ -5,15 +5,77 @@ from datetime import datetime, timezone
 
 from patronus.agent._compose import compose_digest
 from patronus.agent._inventory import build_inventory
+from patronus.agent._prompts import ANGLES_SYSTEM_PROMPT
 from patronus.agent._steps import filter_news, identify_angles, pull_threads, scout_research, summarize_chatter
 from patronus.config import Config
 from patronus.context import Context
 from patronus.db import Database, Item
 from patronus.digest import Digest
+from patronus.llm import estimate_tokens, get_context_limit
 from patronus.observability import agent_run, iteration_span
 from patronus.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+_SHORT_SNIPPET_CHARS = 150
+_ANGLES_MAX_TOKENS = 2048
+
+
+def _angles_prompt_tokens(inventory: str, reader_context: str) -> int:
+    return estimate_tokens(ANGLES_SYSTEM_PROMPT + inventory + reader_context)
+
+
+def _build_angles_inventory(
+    config: Config,
+    db: Database | None,
+    full_inventory: str,
+    reader_context: str,
+    short_id_map: dict[str, str],
+    context_limit: int,
+) -> str:
+    budget = context_limit - _ANGLES_MAX_TOKENS
+    full_tokens = _angles_prompt_tokens(full_inventory, reader_context)
+    logger.info(
+        "Angles prompt estimate: ~%d tokens (budget: %d, limit: %d)",
+        full_tokens, budget, context_limit,
+    )
+    if full_tokens <= budget:
+        logger.info("Angles prompt fits — using full inventory (%d-char snippets)", 300)
+        return full_inventory
+
+    logger.warning(
+        "Angles prompt too large (~%d tokens > %d budget) — rebuilding with %d-char snippets",
+        full_tokens, budget, _SHORT_SNIPPET_CHARS,
+    )
+    trimmed, _, _ = build_inventory(config, db, snippet_chars=_SHORT_SNIPPET_CHARS)
+    trimmed_tokens = _angles_prompt_tokens(trimmed, reader_context)
+    logger.info("Trimmed inventory prompt estimate: ~%d tokens", trimmed_tokens)
+    if trimmed_tokens <= budget:
+        logger.info("Trimmed inventory fits — proceeding with %d-char snippets", _SHORT_SNIPPET_CHARS)
+        return trimmed
+
+    agent_cfg = config.agent
+    current_lookback = agent_cfg.inventory_lookback_days if agent_cfg else 2
+    if current_lookback > 1:
+        logger.warning(
+            "Trimmed inventory still too large (~%d tokens > %d budget) — rebuilding with "
+            "1-day lookback and %d-char snippets",
+            trimmed_tokens, budget, _SHORT_SNIPPET_CHARS,
+        )
+        reduced, _, _ = build_inventory(config, db, snippet_chars=_SHORT_SNIPPET_CHARS, lookback_days_override=1)
+        reduced_tokens = _angles_prompt_tokens(reduced, reader_context)
+        logger.info(
+            "Reduced inventory prompt estimate: ~%d tokens (1-day lookback, %d-char snippets)",
+            reduced_tokens, _SHORT_SNIPPET_CHARS,
+        )
+        return reduced
+
+    logger.warning(
+        "Cannot reduce inventory further (already at 1-day lookback) — proceeding with "
+        "trimmed snippets (~%d tokens)",
+        trimmed_tokens,
+    )
+    return trimmed
 
 
 def plan_and_assemble(
@@ -52,9 +114,13 @@ def plan_and_assemble(
                 if item is not None:
                     items_by_short_id[short_id] = item
 
-        # Step 2: Identify angles
-        with iteration_span("step2-angles", input={"inventory_chars": len(inventory), "context_chars": len(reader_context)}) as span:
-            angles = identify_angles(config, inventory, reader_context)
+        # Step 2: Identify angles (with adaptive inventory to stay within context limit)
+        angles_model = agent_config.angles_model or agent_config.model
+        angles_inventory = _build_angles_inventory(
+            config, db, inventory, reader_context, short_id_map, get_context_limit(angles_model)
+        )
+        with iteration_span("step2-angles", input={"inventory_chars": len(angles_inventory), "context_chars": len(reader_context)}) as span:
+            angles = identify_angles(config, angles_inventory, reader_context)
             span.update(output={"angles": angles})
 
         # Step 3a: Filter news

@@ -316,6 +316,111 @@ class TestBuildInventory:
         _, tweet_inventory, _ = build_inventory(config, db)
         assert "No tweets" in tweet_inventory
 
+    def test_snippet_chars_limits_snippet_length(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(
+            url="https://example.com/long",
+            source_type="rss",
+            title="Long Article",
+            text="A" * 500,
+        )
+        config = _make_config()
+        result, _, _ = build_inventory(config, db, snippet_chars=150)
+        assert "A" * 150 in result
+        assert "A" * 151 not in result
+
+    def test_default_snippet_chars_uses_300(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(
+            url="https://example.com/long",
+            source_type="rss",
+            title="Long Article",
+            text="B" * 500,
+        )
+        config = _make_config()
+        result, _, _ = build_inventory(config, db)
+        assert "B" * 300 in result
+        assert "B" * 301 not in result
+
+    def test_lookback_days_override_accepted(self, tmp_path: object) -> None:
+        from patronus.db import Database
+        db = Database(str(tmp_path / "test.db"))  # type: ignore[arg-type]
+        db.add_item(url="https://example.com/item", source_type="rss", title="Recent Item")
+        config = _make_config(agent=AgentConfig(inventory_lookback_days=7))
+        result, _, _ = build_inventory(config, db, lookback_days_override=1)
+        assert "Recent Item" in result
+
+
+class TestBuildAnglesInventory:
+    def _pipeline_mocks(self) -> dict:
+        return {
+            "mock_compose": MagicMock(return_value=MagicMock()),
+            "mock_threads": MagicMock(return_value="threads"),
+            "mock_research": MagicMock(return_value="research"),
+            "mock_chatter": MagicMock(return_value="chatter"),
+            "mock_news": MagicMock(return_value="news"),
+            "mock_angles": MagicMock(return_value="angles"),
+        }
+
+    @patch("patronus.agent.run.estimate_tokens")
+    @patch("patronus.agent.run.build_inventory")
+    def test_no_degradation_when_under_limit(
+        self, mock_bi: MagicMock, mock_et: MagicMock
+    ) -> None:
+        from patronus.agent.run import _build_angles_inventory
+        mock_et.return_value = 10_000
+        config = _make_config()
+        result = _build_angles_inventory(config, None, "full_inventory", "ctx", {}, 200_000)
+        assert result == "full_inventory"
+        mock_bi.assert_not_called()
+
+    @patch("patronus.agent.run.estimate_tokens")
+    @patch("patronus.agent.run.build_inventory")
+    def test_degrades_to_short_snippets_when_over_limit(
+        self, mock_bi: MagicMock, mock_et: MagicMock
+    ) -> None:
+        from patronus.agent.run import _build_angles_inventory
+        mock_et.side_effect = [210_000, 80_000]
+        mock_bi.return_value = ("trimmed_inventory", "tweets", {})
+        config = _make_config()
+        result = _build_angles_inventory(config, None, "full_inventory", "ctx", {}, 200_000)
+        assert result == "trimmed_inventory"
+        mock_bi.assert_called_once_with(config, None, snippet_chars=150)
+
+    @patch("patronus.agent.run.estimate_tokens")
+    @patch("patronus.agent.run.build_inventory")
+    def test_degrades_to_reduced_lookback_when_still_over_limit(
+        self, mock_bi: MagicMock, mock_et: MagicMock
+    ) -> None:
+        from patronus.agent.run import _build_angles_inventory
+        mock_et.return_value = 210_000
+        mock_bi.side_effect = [
+            ("trimmed", "tweets", {}),
+            ("reduced", "tweets", {}),
+        ]
+        config = _make_config(agent=AgentConfig(inventory_lookback_days=2, max_tokens=2000))
+        result = _build_angles_inventory(config, None, "full_inventory", "ctx", {}, 200_000)
+        assert result == "reduced"
+        assert mock_bi.call_count == 2
+        second_call = mock_bi.call_args_list[1]
+        assert second_call.kwargs.get("snippet_chars") == 150
+        assert second_call.kwargs.get("lookback_days_override") == 1
+
+    @patch("patronus.agent.run.estimate_tokens")
+    @patch("patronus.agent.run.build_inventory")
+    def test_no_lookback_reduction_when_already_at_one_day(
+        self, mock_bi: MagicMock, mock_et: MagicMock
+    ) -> None:
+        from patronus.agent.run import _build_angles_inventory
+        mock_et.return_value = 210_000
+        mock_bi.return_value = ("trimmed", "tweets", {})
+        config = _make_config(agent=AgentConfig(inventory_lookback_days=1, max_tokens=2000))
+        result = _build_angles_inventory(config, None, "full_inventory", "ctx", {}, 200_000)
+        assert result == "trimmed"
+        mock_bi.assert_called_once()
+
 
 class TestIdentifyAngles:
     @patch("patronus.agent._steps.complete")

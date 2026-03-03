@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _FALLBACK_LOOKBACK_DAYS = 3
 
 
-def _format_item(item: Item, short_id: str, previously_featured: bool, cluster_note: str) -> str:
+def _format_item(item: Item, short_id: str, previously_featured: bool, cluster_note: str, snippet_chars: int = 300) -> str:
     parts = [
         f"ID: {short_id}",
         f"Title: {item.title or '(no title)'}",
@@ -27,19 +27,26 @@ def _format_item(item: Item, short_id: str, previously_featured: bool, cluster_n
         parts.append("Flag: PREVIOUSLY_FEATURED")
     if cluster_note:
         parts.append(f"Cluster: {cluster_note}")
-    if item.text:
-        snippet = item.text[:300].replace("\n", " ").strip()
-        if len(item.text) > 300:
+    if item.text and snippet_chars > 0:
+        snippet = item.text[:snippet_chars].replace("\n", " ").strip()
+        if len(item.text) > snippet_chars:
             snippet += "…"
         parts.append(f"Snippet: {snippet}")
     return "\n".join(f"  {p}" for p in parts)
 
 
-def build_inventory(config: Config, db: Database | None) -> tuple[str, str, dict[str, str]]:
+def build_inventory(
+    config: Config,
+    db: Database | None,
+    snippet_chars: int = 300,
+    lookback_days_override: int | None = None,
+) -> tuple[str, str, dict[str, str]]:
     if db is None:
         return "(No inventory available — DB not provided.)", "(No tweet inventory available — DB not provided.)", {}
     agent_cfg = config.agent
-    lookback_days = agent_cfg.inventory_lookback_days if agent_cfg else _FALLBACK_LOOKBACK_DAYS
+    lookback_days = lookback_days_override if lookback_days_override is not None else (
+        agent_cfg.inventory_lookback_days if agent_cfg else _FALLBACK_LOOKBACK_DAYS
+    )
 
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=lookback_days)
@@ -92,7 +99,7 @@ def build_inventory(config: Config, db: Database | None) -> tuple[str, str, dict
             if refs:
                 cluster_note = f"referenced by {len(refs)} item(s)"
 
-            sections.append(_format_item(item, real_to_short[item.id], previously_featured, cluster_note))
+            sections.append(_format_item(item, real_to_short[item.id], previously_featured, cluster_note, snippet_chars))
             sections.append("")
 
     digest_history_counts: dict[str, int] = {}
@@ -125,7 +132,7 @@ def build_inventory(config: Config, db: Database | None) -> tuple[str, str, dict
                 refs = source_item_clusters.get(item.id, [])
                 if refs:
                     cluster_note = f"referenced by {len(refs)} item(s)"
-                tweet_sections.append(_format_item(item, real_to_short[item.id], previously_featured, cluster_note))
+                tweet_sections.append(_format_item(item, real_to_short[item.id], previously_featured, cluster_note, snippet_chars))
                 tweet_sections.append("")
         tweet_inventory = "\n".join(tweet_sections)
     else:
