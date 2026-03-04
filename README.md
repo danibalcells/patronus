@@ -179,8 +179,6 @@ python scripts/list_feeds.py --all  # include inactive feeds
 
 ## Dependency graph
 
-No cycles.
-
 ```
 config           ← (no internal deps)
 db               ← (no internal deps)
