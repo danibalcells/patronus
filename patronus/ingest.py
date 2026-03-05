@@ -106,12 +106,30 @@ def _extract_links_from_html(html: str) -> list[str]:
     return parser.links
 
 
-def _normalize_url(url: str) -> str:
+def _arxiv_abs_to_pdf(url: str) -> str:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").removeprefix("www.")
+    if hostname == "arxiv.org" and parsed.path.startswith("/abs/"):
+        return url.replace("/abs/", "/pdf/", 1)
+    return url
+
+
+def _arxiv_fetch_url(url: str) -> str:
+    """Return the HTML-scraping URL for an arXiv item.
+
+    The /pdf/ path serves a binary PDF that trafilatura cannot parse; the /abs/
+    page is HTML and yields the abstract text.  For all other URLs the input is
+    returned unchanged.
+    """
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").removeprefix("www.")
     if hostname == "arxiv.org" and parsed.path.startswith("/pdf/"):
         return url.replace("/pdf/", "/abs/", 1)
     return url
+
+
+def _normalize_url(url: str) -> str:
+    return _arxiv_abs_to_pdf(url)
 
 
 def _is_allowed_link(url: str) -> bool:
@@ -228,21 +246,22 @@ def ingest_linked_items(
     new_ids: list[str] = []
     for url in urls:
         try:
-            if db.get_item_by_url(url) is not None:
-                logger.debug("Linked URL already exists, skipping: %s", url)
+            storage_url = _arxiv_abs_to_pdf(url)
+            if db.get_item_by_url(storage_url) is not None:
+                logger.debug("Linked URL already exists, skipping: %s", storage_url)
                 continue
 
-            text = _extract_full_text(url)
+            text = _extract_full_text(_arxiv_fetch_url(storage_url))
 
             embedding = None
             if text and not skip_embed:
                 try:
                     embedding = embed_text(text)
                 except Exception:
-                    logger.exception("Embedding failed for linked URL: %s", url)
+                    logger.exception("Embedding failed for linked URL: %s", storage_url)
 
             item_id = db.add_item(
-                url=url,
+                url=storage_url,
                 source_type="link_extraction",
                 item_type=classify_item_type(url),
                 text=text,
@@ -251,7 +270,7 @@ def ingest_linked_items(
             )
             logger.info(
                 "Ingested linked item: %s (id=%s, parent=%s)",
-                url,
+                storage_url,
                 item_id,
                 parent_item_id,
             )
@@ -311,7 +330,9 @@ def poll_feeds(
             if not link:
                 continue
 
-            if db.get_item_by_url(link) is not None:
+            storage_url = _arxiv_abs_to_pdf(link)
+
+            if db.get_item_by_url(storage_url) is not None:
                 feed_skipped += 1
                 continue
 
@@ -321,7 +342,7 @@ def poll_feeds(
 
             raw_entries.append(
                 {
-                    "url": link,
+                    "url": storage_url,
                     "title": getattr(entry, "title", None),
                     "author": _entry_author(entry),
                     "timestamp": _parse_timestamp(entry),
@@ -344,7 +365,7 @@ def poll_feeds(
     non_tweet_indices = [i for i, t in enumerate(item_types) if t != "tweet"]
     fetched_texts: dict[int, Optional[str]] = {}
     if non_tweet_indices:
-        urls_to_fetch = [raw_entries[i]["url"] for i in non_tweet_indices]
+        urls_to_fetch = [_arxiv_fetch_url(raw_entries[i]["url"]) for i in non_tweet_indices]
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(_extract_full_text, urls_to_fetch))
         for idx, full_text in zip(non_tweet_indices, results):
@@ -435,9 +456,12 @@ def poll_feeds(
 
 
 def ingest_url(db: Database, url: str) -> Optional[str]:
-    if db.get_item_by_url(url) is not None:
-        logger.info("URL already exists: %s", url)
+    storage_url = _arxiv_abs_to_pdf(url)
+    if db.get_item_by_url(storage_url) is not None:
+        logger.info("URL already exists: %s", storage_url)
         return None
+
+    fetch_url = _arxiv_fetch_url(storage_url)
 
     title: Optional[str] = None
     author: Optional[str] = None
@@ -445,7 +469,7 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
     downloaded: Optional[str] = None
 
     try:
-        downloaded = trafilatura.fetch_url(url)
+        downloaded = trafilatura.fetch_url(fetch_url)
         if downloaded:
             result = trafilatura.bare_extraction(
                 downloaded, include_comments=False, include_tables=False
@@ -455,29 +479,29 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
                 title = result.get("title")
                 author = result.get("author")
     except Exception:
-        logger.exception("Content extraction failed for %s", url)
+        logger.exception("Content extraction failed for %s", fetch_url)
 
     if not text:
-        logger.warning("Could not extract text from %s", url)
+        logger.warning("Could not extract text from %s", fetch_url)
 
     embedding = None
     if text:
         try:
             embedding = embed_text(text)
         except Exception:
-            logger.exception("Embedding failed for %s", url)
+            logger.exception("Embedding failed for %s", storage_url)
 
     try:
         item_id = db.add_item(
-            url=url,
+            url=storage_url,
             source_type="manual",
-            item_type=classify_item_type(url),
+            item_type=classify_item_type(storage_url),
             title=title,
             author=author,
             text=text,
             embedding=embedding,
         )
-        logger.info("Ingested manual URL: %s (id=%s)", url, item_id)
+        logger.info("Ingested manual URL: %s (id=%s)", storage_url, item_id)
 
         if downloaded:
             links = _filter_allowed_links(_extract_links_from_html(downloaded))
@@ -486,5 +510,5 @@ def ingest_url(db: Database, url: str) -> Optional[str]:
 
         return item_id
     except Exception:
-        logger.exception("Failed to store manual URL: %s", url)
+        logger.exception("Failed to store manual URL: %s", storage_url)
         return None

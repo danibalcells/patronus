@@ -420,7 +420,7 @@ class TestSearchArxiv:
 
         assert len(result.items) == 2
         assert result.items[0]["title"] == "Attention Is All You Need"
-        assert result.items[0]["url"] == "https://arxiv.org/abs/2301.00001"
+        assert result.items[0]["url"] == "https://arxiv.org/pdf/2301.00001"
         assert "Vaswani" in result.items[0]["author"]
         assert result.items[0]["item_type"] == "paper"
         assert result.items[0]["source"] == "arxiv"
@@ -431,14 +431,14 @@ class TestSearchArxiv:
         mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
         tool = SearchArxiv()
         result = tool.execute(query="attention")
-        assert result.items[0]["id"] == "https://arxiv.org/abs/2301.00001"
+        assert result.items[0]["id"] == "https://arxiv.org/pdf/2301.00001"
 
     @patch("patronus.tools.arxiv.feedparser.parse")
     def test_does_not_write_to_db(self, mock_parse: MagicMock, tmp_path: object) -> None:
         db = Database(db_path=str(tmp_path) + "/test.db")
         mock_parse.return_value = _make_fake_feed(FAKE_ENTRIES[:1])
         SearchArxiv().execute(query="attention")
-        assert db.get_item_by_url("https://arxiv.org/abs/2301.00001") is None
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.00001") is None
         db.close()
 
     @patch("patronus.tools.arxiv.feedparser.parse")
@@ -504,7 +504,7 @@ class TestSearchArxiv:
             "tags": [],
         }])
         result = SearchArxiv().execute(query="test")
-        assert result.items[0]["url"] == "https://arxiv.org/abs/2301.99999"
+        assert result.items[0]["url"] == "https://arxiv.org/pdf/2301.99999"
 
     @patch("patronus.tools.arxiv.feedparser.parse")
     def test_sort_by_recency_sets_sortby_param(self, mock_parse: MagicMock) -> None:

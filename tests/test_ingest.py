@@ -11,6 +11,8 @@ import pytest
 
 from patronus.db import Database
 from patronus.ingest import (
+    _arxiv_abs_to_pdf,
+    _arxiv_fetch_url,
     _display_author,
     _entry_author,
     _extract_full_text,
@@ -1161,11 +1163,11 @@ class TestExtractLinksFromHtml:
 
 
 class TestNormalizeUrl:
-    def test_arxiv_pdf_to_abs(self) -> None:
-        assert _normalize_url("https://arxiv.org/pdf/2301.12345") == "https://arxiv.org/abs/2301.12345"
+    def test_arxiv_abs_to_pdf(self) -> None:
+        assert _normalize_url("https://arxiv.org/abs/2301.12345") == "https://arxiv.org/pdf/2301.12345"
 
-    def test_arxiv_abs_unchanged(self) -> None:
-        assert _normalize_url("https://arxiv.org/abs/2301.12345") == "https://arxiv.org/abs/2301.12345"
+    def test_arxiv_pdf_unchanged(self) -> None:
+        assert _normalize_url("https://arxiv.org/pdf/2301.12345") == "https://arxiv.org/pdf/2301.12345"
 
     def test_non_arxiv_unchanged(self) -> None:
         assert _normalize_url("https://example.com/pdf/doc") == "https://example.com/pdf/doc"
@@ -1222,7 +1224,7 @@ class TestFilterAllowedLinks:
         ]
         result = _filter_allowed_links(urls)
         assert result == [
-            "https://arxiv.org/abs/1234",
+            "https://arxiv.org/pdf/1234",
             "https://thezvi.substack.com/p/post",
         ]
 
@@ -1232,16 +1234,16 @@ class TestFilterAllowedLinks:
             "https://arxiv.org/abs/1234",
         ]
         result = _filter_allowed_links(urls)
-        assert result == ["https://arxiv.org/abs/1234"]
+        assert result == ["https://arxiv.org/pdf/1234"]
 
-    def test_normalizes_arxiv_pdf(self) -> None:
+    def test_normalizes_arxiv_abs_and_pdf_to_same_url(self) -> None:
         urls = [
             "https://arxiv.org/pdf/1234",
             "https://arxiv.org/abs/1234",
         ]
         result = _filter_allowed_links(urls)
         assert len(result) == 1
-        assert result[0] == "https://arxiv.org/abs/1234"
+        assert result[0] == "https://arxiv.org/pdf/1234"
 
     def test_empty_list(self) -> None:
         assert _filter_allowed_links([]) == []
@@ -1265,7 +1267,7 @@ class TestIngestLinkedItems:
         ids = ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
 
         assert len(ids) == 1
-        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        item = db.get_item_by_url("https://arxiv.org/pdf/2301.12345")
         assert item is not None
         assert item.source_type == "link_extraction"
         assert item.item_type == "paper"
@@ -1284,7 +1286,7 @@ class TestIngestLinkedItems:
             item_type="tweet",
         )
         db.add_item(
-            url="https://arxiv.org/abs/2301.12345",
+            url="https://arxiv.org/pdf/2301.12345",
             source_type="rss",
             item_type="paper",
         )
@@ -1310,7 +1312,7 @@ class TestIngestLinkedItems:
         ids = ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
 
         assert len(ids) == 1
-        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        item = db.get_item_by_url("https://arxiv.org/pdf/2301.12345")
         assert item is not None
         assert item.text is None
         assert item.embedding is None
@@ -1335,7 +1337,7 @@ class TestIngestLinkedItems:
 
         assert len(ids) == 1
         mock_embed.assert_not_called()
-        item = db.get_item_by_url("https://arxiv.org/abs/2301.12345")
+        item = db.get_item_by_url("https://arxiv.org/pdf/2301.12345")
         assert item is not None
         assert item.text == "Paper text"
         assert item.embedding is None
@@ -1364,8 +1366,8 @@ class TestIngestLinkedItems:
         )
 
         assert len(ids) == 1
-        assert db.get_item_by_url("https://arxiv.org/abs/1111.11111") is None
-        assert db.get_item_by_url("https://arxiv.org/abs/2222.22222") is not None
+        assert db.get_item_by_url("https://arxiv.org/pdf/1111.11111") is None
+        assert db.get_item_by_url("https://arxiv.org/pdf/2222.22222") is not None
 
 
 class TestLinkExtractionInPollFeeds:
@@ -1403,7 +1405,7 @@ class TestLinkExtractionInPollFeeds:
 
         mock_ingest_linked.assert_called_once()
         call_args = mock_ingest_linked.call_args
-        assert call_args[0][2] == ["https://arxiv.org/abs/2301.12345"]
+        assert call_args[0][2] == ["https://arxiv.org/pdf/2301.12345"]
 
     @patch("patronus.ingest.ingest_linked_items")
     @patch("patronus.ingest.embed_batch")
@@ -1490,7 +1492,7 @@ class TestLinkExtractionInPollFeeds:
 
         mock_ingest_linked.assert_called_once()
         call_args = mock_ingest_linked.call_args
-        assert call_args[0][2] == ["https://arxiv.org/abs/9999.99999"]
+        assert call_args[0][2] == ["https://arxiv.org/pdf/9999.99999"]
 
 
 class TestLinkExtractionInIngestUrl:
@@ -1525,7 +1527,7 @@ class TestLinkExtractionInIngestUrl:
         call_args = mock_ingest_linked.call_args
         assert call_args[0][0] == db
         assert call_args[0][1] == item_id
-        assert call_args[0][2] == ["https://arxiv.org/abs/2301.12345"]
+        assert call_args[0][2] == ["https://arxiv.org/pdf/2301.12345"]
 
     @patch("patronus.ingest.ingest_linked_items")
     @patch("patronus.ingest.embed_text")
@@ -1613,7 +1615,7 @@ class TestEndToEndLinkExtraction:
         assert tweet.source_item_id is None
         assert tweet.source_type == "rss"
 
-        paper = db.get_item_by_url("https://arxiv.org/abs/2602.01234")
+        paper = db.get_item_by_url("https://arxiv.org/pdf/2602.01234")
         assert paper is not None
         assert paper.item_type == "paper"
         assert paper.source_item_id == tweet.id
@@ -1622,3 +1624,245 @@ class TestEndToEndLinkExtraction:
         assert paper.embedding is not None
 
         assert db.get_item_by_url("https://x.com/researcher/status/999") is None
+
+
+class TestArxivUrlHelpers:
+    def test_abs_to_pdf_converts_abs(self) -> None:
+        assert _arxiv_abs_to_pdf("https://arxiv.org/abs/2301.12345") == "https://arxiv.org/pdf/2301.12345"
+
+    def test_abs_to_pdf_leaves_pdf_unchanged(self) -> None:
+        assert _arxiv_abs_to_pdf("https://arxiv.org/pdf/2301.12345") == "https://arxiv.org/pdf/2301.12345"
+
+    def test_abs_to_pdf_leaves_non_arxiv_unchanged(self) -> None:
+        assert _arxiv_abs_to_pdf("https://example.com/abs/paper") == "https://example.com/abs/paper"
+
+    def test_abs_to_pdf_www_prefix(self) -> None:
+        assert _arxiv_abs_to_pdf("https://www.arxiv.org/abs/2301.12345") == "https://www.arxiv.org/pdf/2301.12345"
+
+    def test_abs_to_pdf_other_arxiv_paths_unchanged(self) -> None:
+        assert _arxiv_abs_to_pdf("https://arxiv.org/html/2301.12345") == "https://arxiv.org/html/2301.12345"
+
+    def test_fetch_url_converts_pdf_to_abs(self) -> None:
+        assert _arxiv_fetch_url("https://arxiv.org/pdf/2301.12345") == "https://arxiv.org/abs/2301.12345"
+
+    def test_fetch_url_leaves_abs_unchanged(self) -> None:
+        assert _arxiv_fetch_url("https://arxiv.org/abs/2301.12345") == "https://arxiv.org/abs/2301.12345"
+
+    def test_fetch_url_leaves_non_arxiv_unchanged(self) -> None:
+        assert _arxiv_fetch_url("https://example.com/pdf/doc") == "https://example.com/pdf/doc"
+
+    def test_fetch_url_www_prefix(self) -> None:
+        assert _arxiv_fetch_url("https://www.arxiv.org/pdf/2301.12345") == "https://www.arxiv.org/abs/2301.12345"
+
+    def test_fetch_url_other_arxiv_paths_unchanged(self) -> None:
+        assert _arxiv_fetch_url("https://arxiv.org/html/2301.12345") == "https://arxiv.org/html/2301.12345"
+
+    def test_roundtrip_abs_to_pdf_to_fetch(self) -> None:
+        abs_url = "https://arxiv.org/abs/2301.12345"
+        assert _arxiv_fetch_url(_arxiv_abs_to_pdf(abs_url)) == abs_url
+
+
+class TestPollFeedsArxivUrls:
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_arxiv_abs_url_stored_as_pdf(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://export.arxiv.org/rss/cs.LG", name="arXiv cs.LG")
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[_make_entry(link="https://arxiv.org/abs/2301.12345", title="Paper")]
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+
+        poll_feeds(db)
+
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.12345") is not None
+        assert db.get_item_by_url("https://arxiv.org/abs/2301.12345") is None
+
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_arxiv_abs_url_fetched_via_abs(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://export.arxiv.org/rss/cs.LG", name="arXiv cs.LG")
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[_make_entry(link="https://arxiv.org/abs/2301.12345", title="Paper")]
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = [np.ones(1536, dtype=np.float32)]
+
+        poll_feeds(db)
+
+        mock_extract.assert_called_once_with("https://arxiv.org/abs/2301.12345")
+
+    @patch("patronus.ingest.embed_batch")
+    @patch("patronus.ingest._extract_full_text")
+    @patch("patronus.ingest.feedparser")
+    def test_arxiv_abs_deduplicates_against_existing_pdf(
+        self,
+        mock_fp: MagicMock,
+        mock_extract: MagicMock,
+        mock_embed: MagicMock,
+        db: Database,
+    ) -> None:
+        db.add_feed(url="https://export.arxiv.org/rss/cs.LG", name="arXiv cs.LG")
+        db.add_item(url="https://arxiv.org/pdf/2301.12345", source_type="rss")
+        mock_fp.parse.return_value = _make_parsed_feed(
+            entries=[_make_entry(link="https://arxiv.org/abs/2301.12345", title="Paper")]
+        )
+
+        ids = poll_feeds(db)
+
+        assert len(ids) == 0
+        mock_extract.assert_not_called()
+
+
+class TestIngestLinkedItemsArxivUrls:
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_abs_link_stored_as_pdf(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123", source_type="rss", item_type="tweet"
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
+
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.12345") is not None
+        assert db.get_item_by_url("https://arxiv.org/abs/2301.12345") is None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_abs_link_fetched_via_abs_url(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123", source_type="rss", item_type="tweet"
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_linked_items(db, parent_id, ["https://arxiv.org/abs/2301.12345"])
+
+        mock_extract.assert_called_once_with("https://arxiv.org/abs/2301.12345")
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_pdf_link_input_also_stored_as_pdf(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123", source_type="rss", item_type="tweet"
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_linked_items(db, parent_id, ["https://arxiv.org/pdf/2301.12345"])
+
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.12345") is not None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest._extract_full_text")
+    def test_pdf_link_fetched_via_abs_url(
+        self, mock_extract: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        parent_id = db.add_item(
+            url="https://x.com/user/status/123", source_type="rss", item_type="tweet"
+        )
+        mock_extract.return_value = "Abstract text"
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_linked_items(db, parent_id, ["https://arxiv.org/pdf/2301.12345"])
+
+        mock_extract.assert_called_once_with("https://arxiv.org/abs/2301.12345")
+
+
+class TestIngestUrlArxivUrls:
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_abs_url_stored_as_pdf(
+        self, mock_traf: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        mock_traf.fetch_url.return_value = "<html>content</html>"
+        mock_traf.bare_extraction.return_value = {
+            "text": "Abstract", "title": "Paper", "author": "Author"
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        item_id = ingest_url(db, "https://arxiv.org/abs/2301.12345")
+
+        assert item_id is not None
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.12345") is not None
+        assert db.get_item_by_url("https://arxiv.org/abs/2301.12345") is None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_abs_url_fetched_via_abs(
+        self, mock_traf: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        mock_traf.fetch_url.return_value = "<html>content</html>"
+        mock_traf.bare_extraction.return_value = {
+            "text": "Abstract", "title": "Paper", "author": None
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_url(db, "https://arxiv.org/abs/2301.12345")
+
+        mock_traf.fetch_url.assert_called_once_with("https://arxiv.org/abs/2301.12345")
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_pdf_url_input_stored_as_pdf(
+        self, mock_traf: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        mock_traf.fetch_url.return_value = "<html>content</html>"
+        mock_traf.bare_extraction.return_value = {
+            "text": "Abstract", "title": "Paper", "author": None
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        item_id = ingest_url(db, "https://arxiv.org/pdf/2301.12345")
+
+        assert item_id is not None
+        assert db.get_item_by_url("https://arxiv.org/pdf/2301.12345") is not None
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_pdf_url_input_fetched_via_abs(
+        self, mock_traf: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        mock_traf.fetch_url.return_value = "<html>content</html>"
+        mock_traf.bare_extraction.return_value = {
+            "text": "Abstract", "title": "Paper", "author": None
+        }
+        mock_embed.return_value = np.ones(1536, dtype=np.float32)
+
+        ingest_url(db, "https://arxiv.org/pdf/2301.12345")
+
+        mock_traf.fetch_url.assert_called_once_with("https://arxiv.org/abs/2301.12345")
+
+    @patch("patronus.ingest.embed_text")
+    @patch("patronus.ingest.trafilatura")
+    def test_abs_url_deduplicates_against_existing_pdf(
+        self, mock_traf: MagicMock, mock_embed: MagicMock, db: Database
+    ) -> None:
+        db.add_item(url="https://arxiv.org/pdf/2301.12345", source_type="rss")
+
+        result = ingest_url(db, "https://arxiv.org/abs/2301.12345")
+
+        assert result is None
+        mock_traf.fetch_url.assert_not_called()

@@ -4,9 +4,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
-import subprocess
 
 import modal
+
+from patronus.modal_volume import fetch_db
 
 
 def _collect_urls(args: argparse.Namespace) -> list[str]:
@@ -50,10 +51,7 @@ def main() -> None:
 
     if not args.no_sync:
         print("Syncing updated DB locally...")
-        subprocess.run(
-            ["modal", "volume", "get", "patronus-data", "db.sqlite3", ".", "--force"],
-            check=True,
-        )
+        fetch_db()
         print("Local DB updated.")
 
 

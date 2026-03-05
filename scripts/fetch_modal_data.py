@@ -4,22 +4,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
-import subprocess
 
-VOLUME = "patronus-data"
-FILES = {
-    "db": "db.sqlite3",
-    "mirror": "notion_mirror.sqlite3",
-}
-
-
-def fetch(filename: str, dest: Path) -> None:
-    print(f"Fetching {filename} from Modal volume '{VOLUME}'...")
-    subprocess.run(
-        ["modal", "volume", "get", VOLUME, filename, str(dest), "--force"],
-        check=True,
-    )
-    print(f"  -> saved to {dest / filename}")
+from patronus.modal_volume import fetch_db, fetch_mirror
 
 
 def main() -> None:
@@ -44,20 +30,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    dest = Path(args.dest).resolve()
-    dest.mkdir(parents=True, exist_ok=True)
-
     if args.db_only and args.mirror_only:
         parser.error("--db-only and --mirror-only are mutually exclusive")
 
-    targets = list(FILES.values())
-    if args.db_only:
-        targets = [FILES["db"]]
-    elif args.mirror_only:
-        targets = [FILES["mirror"]]
+    dest = Path(args.dest).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
 
-    for filename in targets:
-        fetch(filename, dest)
+    if not args.mirror_only:
+        fetch_db(dest)
+    if not args.db_only:
+        fetch_mirror(dest)
 
     print("Done.")
 

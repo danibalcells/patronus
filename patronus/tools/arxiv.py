@@ -27,10 +27,12 @@ _SORT_BY_MAP = {
 def _canonical_arxiv_url(raw_id: str) -> str:
     url = raw_id.replace("http://", "https://")
     url = re.sub(r"v\d+$", "", url)
-    if "arxiv.org/abs/" not in url:
+    if "arxiv.org/abs/" in url:
+        url = url.replace("/abs/", "/pdf/", 1)
+    elif "arxiv.org/pdf/" not in url:
         arxiv_id = raw_id.split("/")[-1]
         arxiv_id = re.sub(r"v\d+$", "", arxiv_id)
-        url = f"https://arxiv.org/abs/{arxiv_id}"
+        url = f"https://arxiv.org/pdf/{arxiv_id}"
     return url
 
 
