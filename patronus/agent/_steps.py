@@ -188,14 +188,21 @@ def scout_research(
     reader_context: str,
     angles: str,
     tool_registry: ToolRegistry,
+    recently_featured: str = "",
 ) -> str:
     model = _model(config, "research_model")
     logger.info("Step 3b: scouting research (model=%s, max_iter=%d)", model, _RESEARCH_MAX_ITERATIONS)
 
+    recently_featured_block = (
+        f"## Recently featured papers — do not repeat\n\n{recently_featured}\n\n"
+        if recently_featured.strip()
+        else ""
+    )
     initial_message = (
         f"Today is {_today_str()}.\n\n"
         f"## Reader context\n\n{reader_context}\n\n"
         f"## Editorial angles\n\n{angles}\n\n"
+        f"{recently_featured_block}"
         "Curate the research section. Identify the reader's 2-3 active research threads from the "
         "context above, then search for papers specifically about those subfields. Every paper in "
         "your output must come from a tool call. Issue 3-5 parallel tool calls. You have at most "

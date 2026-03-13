@@ -63,14 +63,26 @@ class TelegramConfig:
 
 
 @dataclass
+class NotionSnippetConfig:
+    first_person_head_chars: int = 4000
+    first_person_tail_chars: int = 4000
+    library_head_chars: int = 600
+    library_tail_chars: int = 600
+
+
+@dataclass
 class NotionConfig:
     database_ids: dict[str, str] = field(default_factory=dict)
-    lookback_days: int = 14
+    lookback_days: int = 21
+    library_lookback_days: int = 14
     fallback_lookback_days: int = 30
     min_entries_threshold: int = 3
     max_chars_per_entry: int = 3000
     cache_ttl_hours: int = 24
     mirror_path: str = ""
+    max_input_chars: int = 250_000
+    exclude_library_prefixes: list[str] = field(default_factory=list)
+    snippet: NotionSnippetConfig = field(default_factory=NotionSnippetConfig)
 
 
 @dataclass
@@ -116,7 +128,14 @@ def load_config(
         )
 
     notion_raw = raw.get("notion")
-    notion_cfg = NotionConfig(**notion_raw) if notion_raw else None
+    if notion_raw:
+        notion_raw = dict(notion_raw)
+        snippet_raw = notion_raw.pop("snippet", {})
+        notion_cfg = NotionConfig(**notion_raw)
+        if snippet_raw:
+            notion_cfg.snippet = NotionSnippetConfig(**snippet_raw)
+    else:
+        notion_cfg = None
 
     agent_raw = raw.get("agent")
     agent_cfg = AgentConfig(**agent_raw) if agent_raw else AgentConfig()

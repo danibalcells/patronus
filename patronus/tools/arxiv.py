@@ -4,11 +4,15 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 import feedparser
 
 from patronus.tools.base import ITEM_SNIPPET_MAX_CHARS, Tool, ToolResult
+
+if TYPE_CHECKING:
+    from patronus.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,9 @@ def _build_search_query(query: str, category: str | None, days: int | None) -> s
 
 
 class SearchArxiv(Tool):
+    def __init__(self, db: "Database | None" = None) -> None:
+        self._db = db
+
     @property
     def name(self) -> str:
         return "search_arxiv"
@@ -183,7 +190,10 @@ class SearchArxiv(Tool):
         if not feed.entries:
             return ToolResult(message=f"No Arxiv results found for '{query}'.")
 
+        recently_digested = self._db.get_recently_digested_item_ids() if self._db else set()
+
         items: list[dict] = []
+        skipped: list[str] = []
 
         for entry in feed.entries:
             url = _canonical_arxiv_url(getattr(entry, "id", ""))
@@ -196,6 +206,10 @@ class SearchArxiv(Tool):
             categories = _parse_categories(entry)
             published = getattr(entry, "published", None) or ""
             journal_ref = getattr(entry, "arxiv_journal_ref", None) or ""
+
+            if url in recently_digested:
+                skipped.append(f'"{title}" ({url})')
+                continue
 
             item: dict = {
                 "id": url,
@@ -212,12 +226,19 @@ class SearchArxiv(Tool):
                 item["journal_ref"] = journal_ref
             items.append(item)
 
+        msg_parts = [f"Found {len(items)} new Arxiv results for '{query}'."]
+        if skipped:
+            msg_parts.append(
+                f"{len(skipped)} result(s) were skipped — already featured in a recent digest: "
+                + "; ".join(skipped)
+                + ". Consider adjusting your query to find different work."
+            )
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} Arxiv results for '{query}'.",
+            message=" ".join(msg_parts),
         )
 
 
-def register_arxiv_tools(registry: "ToolRegistry") -> None:
+def register_arxiv_tools(registry: "ToolRegistry", db: "Database | None" = None) -> None:
     from patronus.tools import ToolRegistry as _TR  # noqa: F401
-    registry.register(SearchArxiv())
+    registry.register(SearchArxiv(db=db))

@@ -10,6 +10,7 @@ from patronus.tools.base import ITEM_SNIPPET_MAX_CHARS, Tool, ToolResult
 
 if TYPE_CHECKING:
     from patronus.config import Config
+    from patronus.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +149,35 @@ def _build_item_dict(work: dict) -> dict:
     }
 
 
+def _filter_and_report(
+    items: list[dict],
+    recently_digested: set[str],
+    query_label: str,
+) -> tuple[list[dict], str]:
+    """Remove already-featured papers and build a transparent skip notice."""
+    filtered: list[dict] = []
+    skipped: list[str] = []
+    for item in items:
+        url = item.get("url") or item.get("id", "")
+        if url and url in recently_digested:
+            title = item.get("title") or url
+            skipped.append(f'"{title}" ({url})')
+        else:
+            filtered.append(item)
+    skip_note = ""
+    if skipped:
+        skip_note = (
+            f" {len(skipped)} result(s) were skipped — already featured in a recent digest: "
+            + "; ".join(skipped)
+            + ". Consider adjusting your query to find different work."
+        )
+    return filtered, skip_note
+
+
 class SearchOpenAlex(Tool):
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: "Config", db: "Database | None" = None) -> None:
         self._config = config
+        self._db = db
 
     @property
     def name(self) -> str:
@@ -251,16 +278,19 @@ class SearchOpenAlex(Tool):
         if not works:
             return ToolResult(message=f"No OpenAlex results found for '{query}'.")
 
-        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        recently_digested = self._db.get_recently_digested_item_ids() if self._db else set()
+        raw = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        items, skip_note = _filter_and_report(raw, recently_digested, query)
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} OpenAlex results for '{query}'.",
+            message=f"Found {len(items)} new OpenAlex results for '{query}'.{skip_note}",
         )
 
 
 class GetCitingPapers(Tool):
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: "Config", db: "Database | None" = None) -> None:
         self._config = config
+        self._db = db
 
     @property
     def name(self) -> str:
@@ -337,16 +367,19 @@ class GetCitingPapers(Tool):
         if not works:
             return ToolResult(message=f"No citing papers found for '{raw_id}'.")
 
-        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        recently_digested = self._db.get_recently_digested_item_ids() if self._db else set()
+        raw = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        items, skip_note = _filter_and_report(raw, recently_digested, raw_id)
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} papers citing '{raw_id}'.",
+            message=f"Found {len(items)} papers citing '{raw_id}'.{skip_note}",
         )
 
 
 class GetReferencedPapers(Tool):
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: "Config", db: "Database | None" = None) -> None:
         self._config = config
+        self._db = db
 
     @property
     def name(self) -> str:
@@ -426,19 +459,25 @@ class GetReferencedPapers(Tool):
             logger.exception("Failed to fetch referenced works for %r", work_id)
             return ToolResult(message=f"Failed to fetch references for '{raw_id}'.")
 
-        items = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        recently_digested = self._db.get_recently_digested_item_ids() if self._db else set()
+        raw = [_build_item_dict(work) for work in works if _canonical_url(work)]
+        items, skip_note = _filter_and_report(raw, recently_digested, raw_id)
         total_refs = len(ref_ids)
         return ToolResult(
             items=items,
-            message=f"Found {len(items)} references for '{raw_id}' ({total_refs} total in bibliography).",
+            message=f"Found {len(items)} references for '{raw_id}' ({total_refs} total in bibliography).{skip_note}",
         )
 
 
-def register_openalex_tools(registry: "ToolRegistry", config: "Config") -> None:
+def register_openalex_tools(
+    registry: "ToolRegistry",
+    config: "Config",
+    db: "Database | None" = None,
+) -> None:
     from patronus.tools import ToolRegistry as _TR  # noqa: F401
     if config.openalex_api_key:
-        registry.register(SearchOpenAlex(config))
-        registry.register(GetCitingPapers(config))
-        registry.register(GetReferencedPapers(config))
+        registry.register(SearchOpenAlex(config, db=db))
+        registry.register(GetCitingPapers(config, db=db))
+        registry.register(GetReferencedPapers(config, db=db))
     else:
         logger.warning("OPENALEX_API_KEY not set — OpenAlex tools disabled")

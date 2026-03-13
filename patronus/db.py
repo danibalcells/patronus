@@ -77,6 +77,8 @@ class DigestItemRecord(SQLModel, table=True):
     summary: Optional[str] = None
     score: float = Field(default=0.0)
     matched_topic: Optional[str] = None
+    title: Optional[str] = None
+    section_type: Optional[str] = None
 
 
 class ContextSnapshot(SQLModel, table=True):
@@ -109,33 +111,40 @@ class Database:
         with self.engine.connect() as conn:
             fks = conn.execute(text("PRAGMA foreign_key_list('digest_items')")).fetchall()
             has_item_id_fk = any(row[3] == "item_id" for row in fks)
-            if not has_item_id_fk:
-                return
+            if has_item_id_fk:
+                conn.execute(text("PRAGMA foreign_keys=OFF"))
+                conn.execute(text("""
+                    CREATE TABLE digest_items_new (
+                        id            TEXT PRIMARY KEY,
+                        digest_id     TEXT NOT NULL REFERENCES digests(id),
+                        item_id       TEXT NOT NULL,
+                        summary       TEXT,
+                        score         REAL NOT NULL DEFAULT 0.0,
+                        matched_topic TEXT
+                    )
+                """))
+                conn.execute(text(
+                    "INSERT INTO digest_items_new "
+                    "SELECT id, digest_id, item_id, summary, score, matched_topic FROM digest_items"
+                ))
+                conn.execute(text("DROP TABLE digest_items"))
+                conn.execute(text("ALTER TABLE digest_items_new RENAME TO digest_items"))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_digest_items_digest_id ON digest_items(digest_id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_digest_items_item_id ON digest_items(item_id)"
+                ))
+                conn.execute(text("PRAGMA foreign_keys=ON"))
+                conn.commit()
 
-            conn.execute(text("PRAGMA foreign_keys=OFF"))
-            conn.execute(text("""
-                CREATE TABLE digest_items_new (
-                    id            TEXT PRIMARY KEY,
-                    digest_id     TEXT NOT NULL REFERENCES digests(id),
-                    item_id       TEXT NOT NULL,
-                    summary       TEXT,
-                    score         REAL NOT NULL DEFAULT 0.0,
-                    matched_topic TEXT
-                )
-            """))
-            conn.execute(text(
-                "INSERT INTO digest_items_new "
-                "SELECT id, digest_id, item_id, summary, score, matched_topic FROM digest_items"
-            ))
-            conn.execute(text("DROP TABLE digest_items"))
-            conn.execute(text("ALTER TABLE digest_items_new RENAME TO digest_items"))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_digest_items_digest_id ON digest_items(digest_id)"
-            ))
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_digest_items_item_id ON digest_items(item_id)"
-            ))
-            conn.execute(text("PRAGMA foreign_keys=ON"))
+            existing_cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info('digest_items')")).fetchall()
+            }
+            for col, definition in [("title", "TEXT"), ("section_type", "TEXT")]:
+                if col not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE digest_items ADD COLUMN {col} {definition}"))
             conn.commit()
 
     def __enter__(self) -> Database:
@@ -358,6 +367,8 @@ class Database:
                     summary=str(entry.get("summary") or ""),
                     score=float(entry.get("score", 0.0)),
                     matched_topic=str(entry.get("matched_topic") or ""),
+                    title=str(entry.get("title") or "") or None,
+                    section_type=str(entry.get("section_type") or "") or None,
                 )
                 session.add(record)
             session.commit()
@@ -415,6 +426,35 @@ class Database:
                 {"cutoff": cutoff},
             ).fetchall()
         return {row[0] for row in rows}
+
+    def get_recent_research_papers(self, lookback_days: int = 14) -> list[dict[str, str]]:
+        """Return papers that appeared in research_roundup or long_form_pick sections recently.
+
+        Each entry has ``item_id``, ``title``, and ``digest_date`` keys.  ``title``
+        may be empty for items recorded before the title column was added.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT di.item_id, di.title, d.generated_at"
+                    " FROM digest_items di"
+                    " JOIN digests d ON d.id = di.digest_id"
+                    " WHERE d.generated_at >= :cutoff"
+                    "   AND di.section_type IN ('research_roundup', 'long_form_pick')"
+                    " ORDER BY d.generated_at DESC"
+                ),
+                {"cutoff": cutoff},
+            ).fetchall()
+        seen: dict[str, dict[str, str]] = {}
+        for item_id, title, generated_at in rows:
+            if item_id not in seen:
+                seen[item_id] = {
+                    "item_id": item_id,
+                    "title": title or "",
+                    "digest_date": generated_at[:10],
+                }
+        return list(seen.values())
 
     # ------------------------------------------------------------------
     # Context Snapshots

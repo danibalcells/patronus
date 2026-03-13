@@ -1,0 +1,2213 @@
+[
+  {
+    "trace_id": "509f3d9af8df17fd073e2bcf05879444",
+    "created_at": "2026-03-12 11:30:09.370000+00:00",
+    "total_items": 29,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 6,
+      "chatter": 4,
+      "research_roundup": 10,
+      "threads": 6
+    },
+    "intra_digest_url_dupes": {
+      "x.com/neelnanda5/status/2031888505518076225": [
+        "chatter",
+        "threads"
+      ]
+    },
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 1,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Nicholas Carlini interpretability experiments compelling results",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "transformer representations geometric structure manifolds",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief state representation transformers hidden Markov",
+          "field": "ai",
+          "n": 8,
+          "from_publication_year": 2024,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "software industry transformation AI economics enterprise",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation steering interpretability",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "research experiments validation TuneLens belief geometry",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "geometric structure residual stream",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_by_source",
+        "input": {
+          "source_name": "Simon Willison",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "research publication peer review science funding infrastructure",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry transformers",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Tyler Cowen AI regulation soft regulation government",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric properties manifold transformer representations phase transition",
+          "field": "ai",
+          "n": 6,
+          "from_publication_year": 2024,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "Bayesian updating LLM",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Anthropic company strategy safety mission government pressure",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "interpretability research methodology experimental design",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI regulation governance frontier labs policy",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "hidden state decoding intermediate layer",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "Anthropic career job search values mission alignment",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probing classifier representation",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "attention mechanisms steering representations probing",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry TuneLens steering SPAR",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "days": 5,
+          "n": 20
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "14165aa91766eac09630133f0ff2cbf7",
+    "created_at": "2026-03-11 11:30:08.306000+00:00",
+    "total_items": 25,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 5,
+      "chatter": 1,
+      "research_roundup": 9,
+      "threads": 4,
+      "serendipity": 3
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "context representation transformer layers",
+          "n": 5,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "probe alignment validation mechanistic interpretability",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2025,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Anthropic career AI safety governance decision making",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation steering interpretability",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representation holonomy geometric stability",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probe linear representation",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "intermediate layer decoding transformer",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI industry restructuring capabilities trajectory jobs future",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "geometric structure belief states transformers intermediate layers",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "Bayesian inference transformer",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "Anthropic job application Pentagon defense contract",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry manifolds transformers",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "attention mechanisms consciousness language understanding meaning representation",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 15,
+          "days": 2
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "research taste compelling experiments validation interpretability",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "craft honesty design philosophy material quality attention",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "probe methodology validation similarity metrics interpretability",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry SPAR validation experiments TuneLens",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_by_source",
+        "input": {
+          "source_name": "Permanent Style",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "research methodology compelling results experiment design mechanistic interpretability",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric structure belief states neural networks",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2024,
+          "sort_by": "recency"
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "ba8c60fe4475d0f3aaddeeba995c5a81",
+    "created_at": "2026-03-10 11:30:07.152000+00:00",
+    "total_items": 21,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 4,
+      "research_roundup": 10,
+      "threads": 4
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {
+      "the shape of beliefs: geometry, dynamics, and interventions along representation manifolds of language models' posteriors": [
+        "long_form_pick",
+        "research_roundup"
+      ]
+    },
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 1,
+    "tool_calls": [
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "Anthropic job application alignment work meaning",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "mechanistic interpretability probing methods limitations surface correlations",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "research methodology doing great work scientific practice foundations",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "craft design material honesty aesthetic philosophy making",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief representations context probing",
+          "n": 5,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "career transition institutional stress meaning purpose alignment",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "manifold structure activation space",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Bayesian belief updating geometric structure transformers representations",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Anthropic alignment safety institutional governance AI labs",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "agentic engineering product development AI tools prototypes speed",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "representational geometry interpretability probing",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "model evaluation truthfulness",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probing classifier interpretability",
+          "n": 7,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "days": 7,
+          "n": 20
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representational geometry transformers",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry manifold PCA Bayesian",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 8,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "geometric interpretability manifold belief representations",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "Bayesian inference neural representations",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "context updating LLM",
+          "n": 6,
+          "days": 90
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "68c4277a56d062c9167a7e03f87dcb4e",
+    "created_at": "2026-03-09 11:30:05.388000+00:00",
+    "total_items": 23,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 4,
+      "chatter": 3,
+      "research_roundup": 10,
+      "threads": 3
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "neuroscience cognitive models predictive similarity limitations psychology",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric representation manifold belief updating transformers",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 7,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "alignment focused labs government relationships institutional dynamics AI safety",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "models hacking evaluations",
+          "n": 5,
+          "days": 120
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "Bayesian inference transformers",
+          "n": 7,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "geometric structures representational geometry symmetry",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Bayesian inference geometric structures transformer representations belief updating",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation steering probing",
+          "n": 7,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "material honesty craft traditions design philosophy authenticity",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "manifold structure representations",
+          "n": 6,
+          "days": 90,
+          "category": "cs.LG"
+        }
+      },
+      {
+        "tool": "search_by_source",
+        "input": {
+          "source_name": "Permanent Style",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "tuned lens intermediate representations",
+          "n": 5,
+          "days": 120
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "interpretability methods limitations surface correlations mechanistic circuits",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "geometric structures representations manifolds belief updates",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "joining research lab career transition meaning purpose alignment work",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 7
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "faithfulness chain of thought reasoning language models",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2025
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "product development AI tools prototyping speed taste engineering practices",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry constrained Bayesian transformers",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representation geometry interpretability",
+          "n": 5,
+          "days": 60,
+          "category": "cs.LG"
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "8eab3cf034113a18ffa45b0ea380a33d",
+    "created_at": "2026-03-08 11:30:07.068000+00:00",
+    "total_items": 24,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 5,
+      "chatter": 4,
+      "research_roundup": 7,
+      "threads": 5
+    },
+    "intra_digest_url_dupes": {
+      "x.com/kalinowski007/status/2030320074121478618": [
+        "whats_new",
+        "chatter"
+      ],
+      "x.com/yimatweets/status/2030577182322671695": [
+        "whats_new",
+        "chatter"
+      ]
+    },
+    "intra_digest_id_dupes": {
+      "f7b1790d57fa47a1b65606b19e24f1ae": [
+        "whats_new",
+        "threads"
+      ]
+    },
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 2,
+    "dupe_count_by_id": 1,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "benchmark contamination evaluation gaming AI models recognizing tests",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "benchmarks evaluation testing what models actually doing",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Bayesian reasoning foundation models representations self-consistent",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "constrained Bayesian LLM",
+          "n": 5,
+          "days": 120
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "benchmark contamination evaluation integrity AI",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "chain-of-thought decode answer",
+          "n": 5,
+          "days": 180
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric structure belief representations language models",
+          "field": "ai",
+          "n": 6,
+          "sort_by": "recency",
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry PCA residual stream probe",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "tech_strategy",
+          "n": 15
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI governance legitimacy democratic control frontier labs",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry transformer",
+          "n": 7,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probe interpretability mechanistic",
+          "n": 5,
+          "days": 120
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representational manifold symmetry language",
+          "n": 5,
+          "days": 120
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "interpretability probes mechanistic understanding correlation causation",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "constrained belief update mechanism interpretability probing",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "what interpretability methods reveal mechanistic understanding correlation",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "probing classifier interpretability what neural networks learn",
+          "field": "ai",
+          "n": 5,
+          "sort_by": "recency",
+          "from_publication_year": 2025
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 7
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "safety evaluation benchmark what they actually measure versus claim interpretability reliability",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probing interpretability mechanism",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "agentic coding workflows AI development productivity research acceleration",
+          "n": 10
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "d8f09fd51895af4fc0f9f4e5c7cf997f",
+    "created_at": "2026-03-07 12:30:07.417000+00:00",
+    "total_items": 24,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 7,
+      "research_roundup": 8,
+      "threads": 6
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI agents automated research workflow code generation development patterns",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probe reliability failure modes",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry PCA probe constrained",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI persuasion manipulation dark patterns emotional engagement psychology",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "evaluation contamination benchmark integrity models recognizing tests",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "days": 7,
+          "n": 20
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "Anthropic job application safety alignment interpretability",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "constrained belief update transformer",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "predictive coding neuroscience machine learning computational brain models",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "probe reliability interpretability neural networks",
+          "field": "ai",
+          "n": 5,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief updating Bayesian geometry interpretability probes",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "evaluation contamination LLM",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_by_source",
+        "input": {
+          "source_name": "Brain Inspired",
+          "n": 15
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI labs company culture safety research working conditions alignment team",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Anthropic governance democratic legitimacy AI labs government regulation",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "chain-of-thought decoding reasoning",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "geometric structure belief representations transformers interpretability probing",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "Boris Cherny workflow parallel instances rapid prototyping shipping code",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "what do interpretability techniques actually reveal mechanistic understanding correlation",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation probing interpretability",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "Bayesian inference transformer",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric structure belief representations transformers",
+          "field": "ai",
+          "n": 7,
+          "sort_by": "recency"
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "f9376705ce7d94d906c40976b2cb4028",
+    "created_at": "2026-03-06 12:30:07.045000+00:00",
+    "total_items": 23,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 6,
+      "research_roundup": 7,
+      "threads": 5,
+      "serendipity": 2
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "poetry language creative practice linguistic identity Spanish writing",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation geometry interpretability",
+          "n": 7,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "belief representation geometry interpretability probing activation space",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief updating language models evidence",
+          "field": "ai",
+          "n": 6,
+          "from_publication_year": 2024,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "context-dependent belief representation language models",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2025,
+          "sort_by": "relevance"
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief representation language models context dependence",
+          "field": "ai",
+          "n": 5,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representation manifold dynamics",
+          "n": 6,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief representation LLM probing",
+          "n": 7,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "technical work meaning purpose reconciling craft impact existential",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "benchmark evaluation capability frontier",
+          "n": 5,
+          "days": 45
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "days": 7,
+          "n": 15
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "truth probing linear representation",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "evaluation methodology benchmarks measuring capabilities gaming tests",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "PCA belief geometry representation space probing",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "residual stream intervention steering",
+          "n": 6,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI safety interpretability research governance labs working with government",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "coding agents maintaining understanding cognitive debt black box systems",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "code agent LLM verification",
+          "n": 5,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "career change transition meaning values reconciling different modes work",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "work meaning values career decision uncertainty institutional",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "democratic legitimacy institutions state power private companies accountability",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "institutional crisis decision making joining company during uncertainty",
+          "n": 8
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "a8420d54a1ad56d9b6c2f17c0f5fe218",
+    "created_at": "2026-03-05 21:05:53.555000+00:00",
+    "total_items": 22,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 6,
+      "research_roundup": 8,
+      "threads": 5
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "representation encoding neural probes what activations mean",
+          "field": "cognitive_science",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "faithfulness chain-of-thought probe activation",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "probe interpretation what do neural representations actually mean",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief updating Bayesian inference representation neural networks",
+          "field": "cognitive_science",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probing activation space interpretability",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric structure belief updating neural networks",
+          "field": "ai",
+          "n": 7,
+          "from_publication_year": 2023
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "answer encoding chain-of-thought",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "institutional crisis resignation working for company values compromise",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "inference scaling test-time compute",
+          "n": 6,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief update geometry representational",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry PCA domain-specific",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "poetry daily practice creative writing routine discipline language",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "attention finite time pitcher water cups life priorities",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "domain-specific truthfulness probing classifier",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "work meaning reconcile technical craft values beyond",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "technical work versus meaning craft purpose fulfillment career",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "residual stream representation steering",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "chain of thought reasoning faithfulness language models",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "clean room implementation copyright relicensing legal gray area",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "working relationship institutional values compromise corporate mission drift",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief representation geometry LLM",
+          "n": 7
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "b142f068037f966706283655ab84461d",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "46e62755b50cd93a85dbc76005d10e2f",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "a46e409ace5a9b1485f4c0e330cf8ede",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "e889d5045261bb0dac29009b5c479af9",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "86f9b9b28bb1c10c158fc6a8cfae7484",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "ef0dc20105e8ba98d446ff144367f647",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "b479e1ef0835932d7e4b75861ffa387e",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "f6cffb688a51cb75dc2f7448ce987d0b",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "9a1822d6a0500cd91547eb145a0007b1",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "b7af5600e2c92de2db8a6a2b9d0ad26f",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "6edba30f19811d469f2c2021fb269ce8",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "5dc1eeb5a759d69d1f12dfc11eb98802",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "124f279387c82e0acb2dbebfa0151371",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "a32f3d2f1c5fb73a1f5d7411ccddc5fe",
+    "error": "'int' object is not iterable",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "9561f5e6b77d7c22cbe22b026188fd62",
+    "created_at": "2026-03-05 12:30:11.978000+00:00",
+    "total_items": 24,
+    "section_counts": {
+      "long_form_pick": 3,
+      "whats_new": 4,
+      "chatter": 1,
+      "research_roundup": 10,
+      "threads": 5,
+      "serendipity": 1
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "workplace meaning career purpose technical work",
+          "field": "philosophy",
+          "n": 5,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representation learning geometry manifold",
+          "n": 8,
+          "days": 60,
+          "category": "cs.LG"
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "menswear craft tradition skill material culture object meaning",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "chain-of-thought answer encoding",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "work meaning technical craft reconciliation job search",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "institutional failure modes governance breakdown power dynamics organizations",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "PCA residual stream",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief updating language models representation geometry",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "poetry language practice Spanish identity place culture",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI governance institutional power state control private capability",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "interpretability probing methods linear representation geometry activation space",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation steering LLM",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "cognitive debt agent-generated code maintaining understanding software systems",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry activation space probing",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "truthfulness domain-specific representation",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "linear probe cross-sequence",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "creative practice resistance automation art purpose meaning",
+          "n": 8
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "representation manifold probing",
+          "n": 5,
+          "days": 90
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "belief representation neural encoding semantic geometry",
+          "field": "cognitive_science",
+          "n": 5,
+          "from_publication_year": 2024
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "0bd72d5013f478f428e48aaddf0bce4a",
+    "created_at": "2026-03-04 12:30:05.204000+00:00",
+    "total_items": 23,
+    "section_counts": {
+      "long_form_pick": 1,
+      "whats_new": 6,
+      "chatter": 3,
+      "research_roundup": 8,
+      "threads": 5
+    },
+    "intra_digest_url_dupes": {
+      "x.com/shakeelhashim/status/2028505634329530548": [
+        "chatter",
+        "threads"
+      ]
+    },
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 1,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry activation space",
+          "n": 3
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 7
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "domain-specific domain-general representation",
+          "n": 5,
+          "category": "cs.LG"
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "truthfulness direction activation",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "interpretability methods validity probing classifiers genuine understanding versus correlation",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "institutional epistemics collapse tradition framework meaning systems coherence",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI governance private refusal military use democratic legitimacy institutional failure",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "software complexity design philosophy abstraction systems thinking legibility",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "Anthropic Pentagon democratic legitimacy governance alignment politics",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "interpretability mechanistic understanding theater performance mental proprioception",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "predictive coding language models representation",
+          "field": "ai",
+          "n": 5,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "probing classifier causal",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "geometric structure belief representation activation space residual stream",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "interpretability spurious correlation",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry domain-specific domain-general truth directions PCA visualizations",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "residual stream probing",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "predictive coding prediction engines world models Andy Clark",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI safety job market industry instability lab chaos organizational",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "orthogonal subspaces transformer representations",
+          "field": "ai",
+          "n": 5,
+          "sort_by": "recency"
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "costly signals epistemic breakdown evaluation verification cheap generation",
+          "n": 10
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "d9d0f0902b00f0b224b49c2ac3b0a020",
+    "created_at": "2026-03-03 18:36:29.415000+00:00",
+    "total_items": 24,
+    "section_counts": {
+      "long_form_pick": 2,
+      "whats_new": 4,
+      "chatter": 3,
+      "research_roundup": 8,
+      "threads": 7
+    },
+    "intra_digest_url_dupes": {},
+    "intra_digest_id_dupes": {},
+    "intra_digest_title_dupes": {},
+    "cross_section": {
+      "news_threads": [],
+      "news_research": [],
+      "threads_research": []
+    },
+    "dupe_count_by_url": 0,
+    "dupe_count_by_id": 0,
+    "dupe_count_by_title": 0,
+    "tool_calls": [
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "interpretability understanding versus theater genuine explanation artifacts",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_recent",
+        "input": {
+          "n": 20,
+          "days": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief representation domain-specific domain-general",
+          "n": 5,
+          "days": 60
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "mechanistic interpretability statistical artifacts genuine understanding correlation versus explanation",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "AI job market skills leverage infrastructure versus application layer platform data moats",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "orthogonal subspaces transformers",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_by_topic",
+        "input": {
+          "topic": "philosophy",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "residual stream probing directions",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "belief geometry activation space interpretability",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "predictive coding prediction error brain world model Andy Clark hierarchical inference",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_by_source",
+        "input": {
+          "source_name": "Brain Inspired",
+          "n": 15
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "residual stream PCA visualization activation space geometric structure control experiments",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "orthogonal subspaces factored representations Team Simplex transformers",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "predictive coding neural networks world models",
+          "field": "ai",
+          "n": 5,
+          "from_publication_year": 2023
+        }
+      },
+      {
+        "tool": "search_openalex",
+        "input": {
+          "query": "geometric representation belief context language models",
+          "field": "ai",
+          "n": 8,
+          "from_publication_year": 2024
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "truthfulness encoding linear representations",
+          "n": 7
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "mechanistic interpretability artifacts",
+          "n": 6
+        }
+      },
+      {
+        "tool": "search_notion",
+        "input": {
+          "query": "work cyclical versus linear job search stress timeline career trajectory",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "predictive coding language models",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "activation steering safety",
+          "n": 5
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "private refusal to enable capabilities democratic legitimacy AI governance military use restrictions",
+          "n": 12
+        }
+      },
+      {
+        "tool": "search_similar",
+        "input": {
+          "query": "costly signals AI detection institutional breakdown evaluation cost production cost",
+          "n": 10
+        }
+      },
+      {
+        "tool": "search_arxiv",
+        "input": {
+          "query": "belief geometry LLM",
+          "n": 7
+        }
+      }
+    ]
+  },
+  {
+    "trace_id": "b9fba1250a77e6ab462e572ce7dcd482",
+    "created_at": "2026-03-03 18:35:18.363000+00:00",
+    "error": "no_compose_output"
+  },
+  {
+    "trace_id": "1168cc8121c2971e78618d0e5cfcf2bd",
+    "error": "status_code: 429, body: 429 - rate limit exceeded",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "281c4adf87551b6d978fcb79cdf5b510",
+    "error": "status_code: 429, body: 429 - rate limit exceeded",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "3fa6bd7055319d6ab8da8ed4d53dccc4",
+    "error": "status_code: 429, body: 429 - rate limit exceeded",
+    "created_at": "?"
+  },
+  {
+    "trace_id": "c1b23cf9a9ba5e131186deaa2e0d9b13",
+    "error": "status_code: 429, body: 429 - rate limit exceeded",
+    "created_at": "?"
+  }
+]

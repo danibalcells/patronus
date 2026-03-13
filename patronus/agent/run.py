@@ -19,6 +19,37 @@ logger = logging.getLogger(__name__)
 
 _SHORT_SNIPPET_CHARS = 150
 _ANGLES_MAX_TOKENS = 2048
+_RECENTLY_FEATURED_LOOKBACK_DAYS = 14
+
+
+def _build_recently_featured_block(db: Database | None) -> str:
+    """Build a human-readable list of papers featured in research sections recently.
+
+    Returned as a bullet-list string ready to embed in the scout_research prompt.
+    Returns an empty string when the DB is unavailable or no papers are found.
+    """
+    if db is None:
+        return ""
+    try:
+        papers = db.get_recent_research_papers(lookback_days=_RECENTLY_FEATURED_LOOKBACK_DAYS)
+    except Exception:
+        logger.warning("Could not fetch recently featured papers for research scout", exc_info=True)
+        return ""
+    if not papers:
+        return ""
+    lines = [
+        "The following papers have appeared in recent digests. Do not include them again. "
+        "If a search returns one of these, adjust your query to find different work instead.\n"
+    ]
+    for p in papers:
+        title = p.get("title") or ""
+        item_id = p.get("item_id", "")
+        date = p.get("digest_date", "")
+        if title:
+            lines.append(f"- \"{title}\" — {item_id} (featured {date})")
+        else:
+            lines.append(f"- {item_id} (featured {date})")
+    return "\n".join(lines)
 
 
 def _angles_prompt_tokens(inventory: str, reader_context: str) -> int:
@@ -134,8 +165,9 @@ def plan_and_assemble(
             span.update(output={"chatter": chatter_output})
 
         # Step 3b: Scout research
-        with iteration_span("step3b-research", input={"angles_chars": len(angles)}) as span:
-            research_output = scout_research(config, reader_context, angles, tool_registry)
+        recently_featured_papers = _build_recently_featured_block(db)
+        with iteration_span("step3b-research", input={"angles_chars": len(angles), "recently_featured_count": recently_featured_papers.count("\n- ")}) as span:
+            research_output = scout_research(config, reader_context, angles, tool_registry, recently_featured=recently_featured_papers)
             span.update(output={"research": research_output})
 
         # Step 3c: Pull threads
@@ -157,6 +189,16 @@ def plan_and_assemble(
                     for item in section.items:
                         if item.item_id in short_id_map:
                             item.item_id = short_id_map[item.item_id]
+
+            # Enrich published_date from DB for items that originated there
+            if db is not None:
+                for section in digest.sections:
+                    for item in section.items:
+                        if item.published_date:
+                            continue
+                        db_item = db.get_item(item.item_id)
+                        if db_item and db_item.timestamp:
+                            item.published_date = db_item.timestamp[:10]
             span.update(output={
                 "sections": len(digest.sections),
                 "items": digest.item_count,

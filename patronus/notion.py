@@ -80,7 +80,6 @@ notion_retry = retry(
     reraise=True,
 )
 
-_MAX_INPUT_CHARS = 200_000
 _SUMMARY_MAX_TOKENS = 5000
 
 _SUMMARY_SYSTEM_PROMPT = """\
@@ -351,7 +350,7 @@ class NotionSource:
         if config.notion is None or not config.notion.mirror_path:
             logger.debug("No mirror_path configured, falling back to Notion API")
             return None
-        from patronus.notion_mirror import NotionMirror
+        from patronus.notion_mirror import NotionMirror, trim_content
         try:
             mirror = NotionMirror(config.notion.mirror_path)
         except Exception:
@@ -376,42 +375,77 @@ class NotionSource:
                     config.notion.cache_ttl_hours,
                 )
 
-            since = datetime.now(timezone.utc) - timedelta(days=config.notion.lookback_days)
-            pages = mirror.get_recent(since=since)
+            now = datetime.now(timezone.utc)
+            notion_cfg = config.notion
+
+            first_person_dbs = [db for db in notion_cfg.database_ids if db != "library"]
+
+            since_fp = now - timedelta(days=notion_cfg.lookback_days)
+            fp_pages = mirror.get_recent(source_dbs=first_person_dbs, since=since_fp)
             logger.info(
-                "Mirror query (lookback %dd): %d pages found",
-                config.notion.lookback_days,
-                len(pages),
+                "Mirror query first-person (lookback %dd, dbs=%s): %d pages",
+                notion_cfg.lookback_days,
+                first_person_dbs,
+                len(fp_pages),
             )
 
-            if len(pages) < config.notion.min_entries_threshold:
-                since_fallback = datetime.now(timezone.utc) - timedelta(days=config.notion.fallback_lookback_days)
-                pages = mirror.get_recent(since=since_fallback)
+            if len(fp_pages) < notion_cfg.min_entries_threshold:
+                since_fallback = now - timedelta(days=notion_cfg.fallback_lookback_days)
+                fp_pages = mirror.get_recent(source_dbs=first_person_dbs, since=since_fallback)
                 logger.info(
-                    "Mirror query (fallback lookback %dd): %d pages found",
-                    config.notion.fallback_lookback_days,
-                    len(pages),
+                    "Mirror query first-person (fallback lookback %dd): %d pages",
+                    notion_cfg.fallback_lookback_days,
+                    len(fp_pages),
                 )
 
-            if len(pages) < config.notion.min_entries_threshold:
+            since_lib = now - timedelta(days=notion_cfg.library_lookback_days)
+            lib_pages = mirror.get_recent(source_dbs=["library"], since=since_lib)
+            logger.info(
+                "Mirror query library (lookback %dd): %d pages",
+                notion_cfg.library_lookback_days,
+                len(lib_pages),
+            )
+
+            all_pages = sorted(fp_pages + lib_pages, key=lambda p: p.last_edited_at, reverse=True)
+
+            if len(all_pages) < notion_cfg.min_entries_threshold:
                 logger.warning(
                     "Mirror has too few entries (%d < threshold %d) — falling back to Notion API",
-                    len(pages),
-                    config.notion.min_entries_threshold,
+                    len(all_pages),
+                    notion_cfg.min_entries_threshold,
                 )
                 return []
 
-            logger.info("Using mirror as context source (%d entries)", len(pages))
-            return [
-                NotionEntry(
+            snippet_cfg = notion_cfg.snippet
+            exclude_prefixes = notion_cfg.exclude_library_prefixes
+            entries: list[NotionEntry] = []
+            skipped = 0
+
+            for p in all_pages:
+                if p.source_db == "library" and exclude_prefixes:
+                    if any(p.title.startswith(prefix) for prefix in exclude_prefixes):
+                        skipped += 1
+                        continue
+
+                if p.source_db == "library":
+                    trimmed = trim_content(p.content, snippet_cfg.library_head_chars, snippet_cfg.library_tail_chars)
+                else:
+                    trimmed = trim_content(p.content, snippet_cfg.first_person_head_chars, snippet_cfg.first_person_tail_chars)
+
+                entries.append(NotionEntry(
                     title=p.title,
                     source_db=p.source_db,
-                    content=p.content_snippet,
+                    content=trimmed,
                     last_edited=p.last_edited_at,
                     created=p.created_at,
-                )
-                for p in pages
-            ]
+                ))
+
+            logger.info(
+                "Using mirror as context source (%d entries, %d excluded by prefix filter)",
+                len(entries),
+                skipped,
+            )
+            return entries
 
     def get_context(self, config: Config, force_refresh: bool = False) -> str:
         if config.notion is None:
@@ -488,8 +522,9 @@ class NotionSource:
                 f"{entry.content}"
             )
 
+        max_input_chars = config.notion.max_input_chars if config.notion else 250_000
         full_text = "\n\n---\n\n".join(prompt_parts)
-        full_text = full_text[:_MAX_INPUT_CHARS]
+        full_text = full_text[:max_input_chars]
 
         model = config.agent.notion_context_model if config.agent else ""
         logger.info(

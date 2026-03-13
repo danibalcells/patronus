@@ -12,7 +12,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _FTS_TABLE = "pages_fts"
-_SNIPPET_LENGTH = 300
+_SEARCH_SNIPPET_LENGTH = 1000
 _FTS5_SPECIAL = str.maketrans({c: " " for c in '"*^()-:'})
 
 
@@ -24,10 +24,25 @@ def _sanitize_fts5_query(query: str) -> str:
     return " ".join(f'"{t}"' for t in tokens)
 
 
+_OMISSION_MARKER = "\n\n[... intermediate content omitted ...]\n\n"
+
+
+def trim_content(content: str, head_chars: int, tail_chars: int) -> str:
+    """Return content trimmed to head_chars from the start and tail_chars from the end.
+
+    If the content fits within head_chars + tail_chars, it is returned as-is.
+    Otherwise the middle is replaced with a clear omission marker.
+    """
+    if len(content) <= head_chars + tail_chars:
+        return content
+    return content[:head_chars] + _OMISSION_MARKER + content[-tail_chars:]
+
+
 @dataclass
 class MirrorPage:
     id: str
     title: str
+    content: str
     content_snippet: str
     source_db: str
     created_at: str
@@ -247,10 +262,11 @@ class NotionMirror:
 
 def _row_to_mirror_page(row: sqlite3.Row) -> MirrorPage:
     content: str = row["content"] or ""
-    snippet = content[:_SNIPPET_LENGTH] + ("…" if len(content) > _SNIPPET_LENGTH else "")
+    snippet = ("…" if len(content) > _SEARCH_SNIPPET_LENGTH else "") + content[-_SEARCH_SNIPPET_LENGTH:]
     return MirrorPage(
         id=row["id"],
         title=row["title"] or "",
+        content=content,
         content_snippet=snippet,
         source_db=row["source_db"] or "",
         created_at=row["created_at"] or "",

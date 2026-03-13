@@ -35,9 +35,9 @@ def _build_default_sources(config: Config, db: Database) -> list[Personalization
 def _build_tool_registry(config: Config, db: Database) -> ToolRegistry:
     registry = ToolRegistry()
     register_local_tools(registry, config, db)
-    register_arxiv_tools(registry)
+    register_arxiv_tools(registry, db=db)
     register_notion_tools(registry, config)
-    register_openalex_tools(registry, config)
+    register_openalex_tools(registry, config, db=db)
     return registry
 
 
@@ -115,12 +115,24 @@ class DigestPipeline:
             formatted = ""
 
         items_data = []
-        for item in digest.all_items:
+        for section in digest.sections:
+            for item in section.items:
+                items_data.append({
+                    "item_id": item.item_id or (item.scored_item.item.id if item.scored_item else ""),
+                    "title": item.title,
+                    "summary": item.summary,
+                    "score": item.scored_item.score if item.scored_item else 0.0,
+                    "matched_topic": item.scored_item.matched_topic if item.scored_item else "",
+                    "section_type": section.type.value,
+                })
+        for item in digest.items:
             items_data.append({
                 "item_id": item.item_id or (item.scored_item.item.id if item.scored_item else ""),
+                "title": item.title,
                 "summary": item.summary,
                 "score": item.scored_item.score if item.scored_item else 0.0,
                 "matched_topic": item.scored_item.matched_topic if item.scored_item else "",
+                "section_type": None,
             })
 
         self._db.save_digest(

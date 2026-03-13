@@ -37,8 +37,17 @@ notion:
     reviews: "29a609f4e9ac80389278ddb52f06cd06"
     big_questions: "c2f6512ba3314226a0c6f5f81eada7c2"
   lookback_days: 21
+  library_lookback_days: 14
   fallback_lookback_days: 45
   min_entries_threshold: 3
   max_chars_per_entry: 10000
   cache_ttl_hours: 24
   mirror_path: "notion_mirror.sqlite3"
+  max_input_chars: 250000
+  exclude_library_prefixes:
+    - "Patronus"
+  snippet:
+    first_person_head_chars: 4000
+    first_person_tail_chars: 4000
+    library_head_chars: 600
+    library_tail_chars: 600
